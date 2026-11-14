@@ -1,0 +1,13 @@
+{
+  "name": "agent-desk",
+  "version": "2.0.0",
+  "description": "An agent skill that runs a desk of AI coding agents in any GitHub repository: one leader, up to six agents in Claude Code, Codex or Antigravity, working through pull requests.",
+  "license": "MIT",
+  "type": "module",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "test": "node --test --test-timeout=120000",
+    "pack": "node skill/agent-desk/scripts/install.mjs --pack --out agent-desk.zip"
+  },
+  "keywords": ["agent-skills", "claude-code", "codex", "antigravity", "multi-agent", "code-review"]
+}

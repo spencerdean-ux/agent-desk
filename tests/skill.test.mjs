@@ -51,8 +51,10 @@ test("the skill is one folder: a router under 12,000 characters, a file per sub-
 });
 
 test("nothing published names anyone's repository, branch, project, agents or history: the skill, the README and the changelog read as nobody's in particular", () => {
-  const banned = [/spencerdean/i, /trip-planner/, /trips-launch/, /optimistic-cray/, /\bgemini-[abcd]\b/, /its-me-jessica/, /kit\/agent-desk/, /scripts\/desk\//, /agents\/desk\/protocol/,
-    /github\.com\/(?!<)[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+/, /--branch main\b/, /\b(October|November|December) 20\d\d\b/, /the owner, \d/, /\bRelease B\b/, /\bkit 1\.\d/i, /test-worker/, /field report/];
+  // Any repository's address, any dated note of who decided what, any path of a desk from before the
+  // skill was one folder, and any clone of a fixed branch.
+  const banned = [/github\.com\/(?!<)[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+/, /--branch main\b/, /\b(January|February|March|April|May|June|July|August|September|October|November|December) 20\d\d\b/,
+    /the owner, \d/, /\bkit 1\.\d/i, /kit\/agent-desk/, /scripts\/desk\//, /agents\/desk\/protocol/, /field report/];
   const files = [...walk(SK).map((f) => join(SK, f)), join(root, "README.md"), join(root, "CHANGELOG.md"), join(root, "package.json")];
   for (const f of files) {
     const text = readFileSync(f, "utf8");

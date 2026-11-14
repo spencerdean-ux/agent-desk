@@ -1358,7 +1358,7 @@ test("desk.mjs set: the leader's sequence (done, then ready with a new brief) le
   try {
     const lead = join(d.dir, "lead");
     writeFileSync(join(lead, ASSIGNMENTS, "A2-w.md"), good({ id: "A2-w", slot: "agent-a", reviewer: "agent-b", branch: "desk/garden-app/agent-a/A2-w", port: "8811", lists: { may_change: ["src/"], frozen: [], checks: ["true"] } }));
-    let r = deskRun(lead, "set", "agent-a", "review", "--brief", "A1-x", "--pr", "232");
+    let r = deskRun(lead, "set", "agent-a", "review", "--brief", "A1-x", "--pr", "32");
     assert.equal(r.status, 0, last(r));
     r = deskRun(lead, "set", "agent-a", "done");
     assert.equal(r.status, 0, last(r));
@@ -1377,10 +1377,10 @@ test("desk.mjs set: the leader's sequence (done, then ready with a new brief) le
     // A pull request the agent's own report puts on another brief: set and validate both refuse it.
     mkdirSync(join(lead, STATUS_DIR), { recursive: true });
     writeFileSync(join(lead, STATUS_DIR, "agent-a.json"), JSON.stringify({ desk: 1, project: "garden-app", agent: "agent-a", phase: "pushed", brief: "A1-x", pr: "#32", at: new Date().toISOString() }) + "\n");
-    r = deskRun(lead, "set", "agent-a", "review", "--brief", "A2-w", "--pr", "232");
+    r = deskRun(lead, "set", "agent-a", "review", "--brief", "A2-w", "--pr", "32");
     assert.equal(r.status, 1, last(r)); assert.match(r.stderr, /report says #32 is A1-x/);
     const cfg = parseConfig(readFileSync(join(lead, CONFIG_PATH), "utf8"));
-    const bad = updateRow(parseBoard(readFileSync(join(lead, "agents/desk/garden-app/board.md"), "utf8")).slots, cfg, "agent-a", { state: "review", brief: "A2-w", pr: "232" });
+    const bad = updateRow(parseBoard(readFileSync(join(lead, "agents/desk/garden-app/board.md"), "utf8")).slots, cfg, "agent-a", { state: "review", brief: "A2-w", pr: "32" });
     writeFileSync(join(lead, "agents/desk/garden-app/board.md"), renderBoard(cfg, bad));
     r = deskRun(lead, "validate");
     assert.equal(r.status, 1, last(r)); assert.match(r.stdout, /report says #32 is A1-x/);

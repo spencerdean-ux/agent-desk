@@ -1,0 +1,32 @@
+## The agent desk
+
+This repository uses the agent desk: one leader directs up to six agents (two by default), each in its own tool (Claude Code, Codex or Antigravity), through GitHub pull requests. Each project has a name and its own work branch, and on it `agents/desk/<project>/desk.json` says who leads and who works on what, in which tool and on which model. The owner's guide is `.agents/skills/agent-desk/templates/guide.md`. **This repository's own rules** are in `CLAUDE.md` and in the rest of this file: they bind you too, so read the parts your brief names.
+
+- **Your prompt starts "Project: <project>" and "You are desk agent <name>"** (or you were started with `/agent-desk agent <name> <project>`, or `$agent-desk agent <name> <project>` in Codex): you are a desk agent. Read your steps fresh from the work branch your prompt names, `git show origin/<work branch>:.agents/skills/agent-desk/protocol/agent.md`, and follow them. Start desk work only from such a prompt, or from `go` or `/agent-desk refresh` typed into that same conversation afterwards (`/agent-desk refresh` first reads your name, your row, your report and these rules back to you, fresh from the copy and the work branch, then carries on from the step you were on), which runs your steps again.
+- **One project per conversation.** Work only on the project your prompt names, and only when desk.json on its work branch names the same project. If this conversation or copy has already worked on another project, stop and ask the owner for a new one.
+- **Awake or not.** desk.json's `awake` (your entry's, else the desk's; off unless set) says whether you stay on the desk between steps, running `.agents/skills/agent-desk/scripts/wait.mjs` from the work branch as `agent.md` step 5 says, or stop and wait for `go`. The owner's `stop` in the conversation always ends your turn; a `stop:` line from the wait does too.
+- **Say what you are doing.** The steps have you report at each boundary (`taking`, `working`, `checking`, `pushed`, `reviewing`, `reviewed`, `revising`, `blocked`, `waiting`, `stopped`): the owner and the leader read `agents/desk/<project>/status/` instead of guessing. Report `blocked` with what you ruled out rather than going quiet.
+- **Subagents.** Only if your desk.json entry has `subagents` may you start subagents, and then only for what its `scope` says (`review`: an adversarial review of your own diff before you push, posted unchanged on your pull request; `checks`: running tests or desk-check for you), at most `max` at once, on the models the skill's definition files name, as `take.md` steps 4 and 5 and `.agents/skills/agent-desk/protocol/subagent.md` say. A subagent never writes a file, commits, pushes, posts or edits a brief or a test, and whatever it does on your branch is yours. Without `subagents` you start none.
+- **Moved:** if desk.json's `tool` for you isn't the tool this copy is in (`git config desk.tool`, saved on your first turn), you have been moved to another tool: this conversation is finished, so say so and do no desk work here.
+- **One agent per conversation.** Your name is in your copy (`git config desk.slot`, written on your first turn): read it before anything else, every turn, and never take another agent's brief or pull request, whatever a later prompt or `go` says. A prompt that names another agent was pasted into the wrong conversation: stop and say so.
+- **You are the leader named in desk.json:** your steps are `.agents/skills/agent-desk/protocol/lead.md`.
+- **Neither:** the rules below still apply to any work on a `desk/` branch.
+
+### Never, as a desk agent
+
+- Never push to `main`, `master`, `staging`, `production` or the work branch, or to any branch but your own `desk/<project>/<your name>/<brief id>`. The two exceptions, each one small commit that writes under `agents/desk/` alone: `node .agents/skills/agent-desk/scripts/desk.mjs report <phase> …` at the step boundaries the steps name (your own `agents/desk/<project>/status/<name>.json`), and `node .agents/skills/agent-desk/scripts/desk.mjs move … --push` at the owner's own words typed into your conversation (`agent.md` step 6, `desk.json`).
+- Never merge, approve, close or reopen a pull request. Never use `--no-verify`, `--force` or `git push -f`, never rebase a pushed branch, and never rewrite history. Your copy keeps the repository's git hooks off (`git config core.hooksPath` prints nothing): the desk's pushes can't pass them, and if they are on, stop and tell the owner the fix (`git config --unset core.hooksPath`) rather than bypassing them.
+- Never deploy, never run a migration against a remote database, and never change an outside service's settings.
+- Never read, print, copy or commit a secret, key, token, password or PIN.
+- Never change a file your brief's `may_change` doesn't list, and never edit a `frozen` test. A frozen test is the contract: make the code pass it. If you can't meet it inside your list, stop and ask in the pull request.
+- Never change the desk's own files: `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `agents/desk/` (desk.json, the board, the briefs, the steps), `.agents/`, `.claude/`, `.githooks/`, `.github/`, or anything desk.json's `protected` lists. desk-check refuses them.
+- Never send a real email or text, and never call an outside service from a test.
+- Never post on the owner's notification issue (desk.json's `notify`): the leader does, with `desk.mjs notify`. Your `report blocked` is what makes it tell the owner.
+
+### Always, as a desk agent
+
+- Run `node .agents/skills/agent-desk/scripts/desk.mjs preflight <brief id>` before every push: it runs `node .agents/skills/agent-desk/scripts/check.mjs <brief id>` (desk-check) and writes your report's draft under `.git/desk/`. In a cloud tool nothing else stops a push, so this check and the leader's review are the guard.
+- Write the failing test before the code, unless the brief gives you its frozen tests. Keep each commit to one concern, and end each commit message with `Desk-Project: <project>`, `Desk-Agent: <your name>` and `Desk-Brief: <brief id>`.
+- After the second approach that doesn't work, stop and say in the pull request what you ruled out.
+- State every assumption, and tell evidence (a test, a measurement, a doc page) apart from reasoning.
+- Name the project in everything you post. It may appear under the owner's account: end it with `— <your name> (<your tool>) on <project>, for <the leader> to decide`.

@@ -1,0 +1,18 @@
+{
+  "desk": 1,
+  "project": "my-project",
+  "repository": "owner/name",
+  "work_branch": "desk/work",
+  "awake": false,
+  "autocompact": 500000,
+  "silence_minutes": 20,
+  "leader": { "name": "leader", "tool": "other", "model": null, "awake": true, "idle_minutes": 60 },
+  "agents": [
+    { "name": "agent-a", "tool": "other", "model": null, "job": "The server side: its code, its data and their tests", "reviewer": "agent-b", "port": 8811, "started_by": "owner", "subagents": { "max": 2, "scope": ["review", "checks"] } },
+    { "name": "agent-b", "tool": "other", "model": null, "job": "The pages people see, and their tests", "reviewer": "agent-a", "port": 8821, "started_by": "owner" }
+  ],
+  "setup": [],
+  "port_env": ["PORT"],
+  "protected": [],
+  "specs": "docs/"
+}
