@@ -1,6 +1,6 @@
 // What the owner pastes, and where: each agent's prompt, and the one next step for each agent on the
 // board. Pure: the caller hands in the settings and a board row.
-import { agentNamed, isAwake, autocompactOf, subagentsOf, COMPACT_WHERE, TOOL_WORDS } from "./config.mjs";
+import { agentNamed, isAwake, autocompactOf, compactionOn, allowedModels, subagentsOf, COMPACT_WHERE, TOOL_WORDS } from "./config.mjs";
 import { prNumber } from "./board.mjs";
 
 const PLACE = { antigravity: "its own conversation; in the Antigravity app on a computer, a project of its own whose one folder is its own clone of the repository, started as Local", codex: "its own task or session", "claude-code": "its own session", other: "its own conversation" };
@@ -32,7 +32,9 @@ export function agentPrompt(cfg, name, { review } = {}) {
   if (a.model) lines.push(`Your desk entry names the model ${a.model}. If you can tell you are running a different one, say so first, then carry on.`);
   const sub = subagentsOf(cfg, a);
   if (sub) lines.push(`You may start up to ${sub.max} subagents of your own, for ${sub.scope.join(" and ")} only, on ${sub.scope.map((k) => `${sub.models[k]} (${k})`).join(" and ")}, as take.md steps 4 and 5 and .agents/skills/agent-desk/protocol/subagent.md say (the tool's definitions are desk-${sub.scope.join(" and desk-")}); a subagent never writes a file, commits, pushes or posts, and the review it writes of your diff is posted by you, unchanged, as ${a.name}-review (subagent). Anything a subagent does on your branch counts as yours.`);
-  lines.push(`Your conversation compacts at ${autocompactOf(cfg, a).toLocaleString("en-GB")} tokens (desk.json's autocompact), read from ${COMPACT_WHERE[a.tool] || COMPACT_WHERE.other}; if you can tell your tool won't honour it, say so once and carry on.`);
+  const may = allowedModels(a);
+  if (may) lines.push(`On this desk you may run on ${may.join(" or ")} only. If you can tell you are running another model, do no work: say which, and stop, as agent.md step 2 says (node .agents/skills/agent-desk/scripts/desk.mjs models check "<your model>"). If I then type "allow this model", add it with node .agents/skills/agent-desk/scripts/desk.mjs models allow "<your model>" --push and carry on.`);
+  if (compactionOn(cfg)) lines.push(`Your conversation compacts at ${autocompactOf(cfg, a).toLocaleString("en-GB")} tokens (desk.json's autocompact), read from ${COMPACT_WHERE[a.tool] || COMPACT_WHERE.other}; if you can tell your tool won't honour it, say so once and carry on.`);
   lines.push(
     `In your copy of the repository, run: git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*" && git fetch origin`,
     `Then read your steps with: git show origin/${wb}:.agents/skills/agent-desk/protocol/agent.md`,

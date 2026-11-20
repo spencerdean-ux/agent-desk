@@ -5,7 +5,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { autocompactOf, compactionFiles, subagentFiles } from "./config.mjs";
+import { autocompactOf, compactionFiles, compactionOn, subagentFiles } from "./config.mjs";
 
 export const SKILL_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const skillFile = (p) => readFileSync(join(SKILL_DIR, p), "utf8");
@@ -34,7 +34,7 @@ const put = (dir, p, s) => { mkdirSync(dirname(join(dir, p)), { recursive: true 
 export function writeRepoFiles(dir, cfg) {
   const written = [];
   for (const rule of RULES) { put(dir, rule.file, withBlock(readAt(dir, rule.file), rule)); written.push(rule.file); }
-  for (const t of compactionFiles(autocompactOf(cfg))) { put(dir, t.file, t.apply(readAt(dir, t.file))); written.push(t.file); }
+  if (compactionOn(cfg)) for (const t of compactionFiles(autocompactOf(cfg))) { put(dir, t.file, t.apply(readAt(dir, t.file))); written.push(t.file); }
   for (const f of subagentFiles(cfg)) { put(dir, f.file, f.text); written.push(f.file); }
   return written;
 }

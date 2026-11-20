@@ -65,7 +65,7 @@ You can say more up front:
 | Type | It does |
 |---|---|
 | `/agent-desk install` | makes the skill available: in a repository, on your computer, or as a zip |
-| `/agent-desk setup` | sets up or changes one project's desk, and gives each agent's starting wording |
+| `/agent-desk setup` | sets up or changes one project's desk: it asks the project's name, how many agents of each kind, their models, how many briefs to keep ready, and the rest, each with its default; then gives each agent's starting wording |
 | `/agent-desk lead …` | the leader's work: `check`, `brief …`, `merge`, `plan`, `move`, `reassign`, `shape`, `awake on`, `end` |
 | `good night`, then later `go` | typed at the leader: every agent stops, then the desk; `go` at the leader, then at each agent, wakes them |
 | `/agent-desk agent <name> <project>` | starts a conversation's work as one agent |

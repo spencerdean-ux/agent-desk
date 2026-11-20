@@ -33,5 +33,13 @@ export function planDesk({ cfg, rows = {}, open = {}, queue = [], shared = [], d
     }
     lines.push(`${a.name}: ${parts.length ? parts.join(", then ") : "nothing queued"}`);
   }
+  // Briefs kept ready behind each agent's current one, and the spare pool (desk.json's ready and spare).
+  if (Number.isInteger(cfg.ready)) for (const a of cfg.agents || []) {
+    const have = queue.filter((x) => x.slot === a.name).length;
+    if (have < cfg.ready) lines.push(`${a.name} has ${have} of ${cfg.ready} brief${cfg.ready === 1 ? "" : "s"} ready: write ${cfg.ready - have} more (desk.mjs next ${a.name} names the spec step; brief <id> --for ${a.name} --queue writes it)`);
+  }
+  const spares = queue.filter((x) => x.slot === "any").map((x) => x.id);
+  const want = Number.isInteger(cfg.spare) ? cfg.spare : 0;
+  if (spares.length || want) lines.push(`spare: ${spares.length ? spares.join(", ") : "none"}${spares.length < want ? ` (${spares.length} of ${want}: write ${want - spares.length} more)` : ""}`);
   return lines;
 }

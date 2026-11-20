@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.2.0
+
+- **Setup asks everything, in three rounds.** The project's name; how many agents and how many in Claude Code, Codex and Antigravity; the models each may use; briefs kept ready and spare; pre-writing; the spec; jobs and reviewers; automatic checking, the silence warning, compaction, subagents, who starts each agent and the work branch. Every question shows its default, and "use the defaults for the rest" is always an answer. `desk.mjs setup` takes the answers as options.
+- **Your own defaults.** An answer that differs from the default can be kept for future projects in the repository: `desk.mjs defaults`, `defaults --set <key>=<value>`, `defaults --reset [key]`, in `agents/desk/defaults.json`.
+- **Compaction can be left alone.** `autocompact: false` ("not set by the skill") writes no tool's compaction setting and says nothing of it.
+- **Models an agent may use.** An agent's `models` list; an agent on another model stops and says so. The owner's "allow this model" in that conversation adds it: `desk.mjs models allow "<model>" --push`. Also `models check` and `models disallow`.
+- **Briefs kept ready, and a spare pool.** desk.json's `ready` and `spare`; `desk.mjs plan` names a shortfall; `brief … --for any --queue` writes a spare and `up <id> --for <agent>` gives it to an agent.
+- **Waves.** `brief … --queue --wave <n>`, `desk.mjs waves` (the plan, wave by wave, shown to the owner before any agent starts), `up --wave <n>`, and a review after each wave held to ten minutes (`waves --review <n>`, `waves --reviewed <n>`).
+
 ## 2.1.0
 
 - **An awake agent in Antigravity no longer hangs.** It used to wait inside a running command, about once a minute, and after about an hour the conversation hung for good. Its wait is now one short look, and between looks it sets a 180-second timer with Antigravity's own `schedule` tool and ends its turn. With no timer to set, it reports `stopped` and waits for `go`. Claude Code and Codex wait as before.

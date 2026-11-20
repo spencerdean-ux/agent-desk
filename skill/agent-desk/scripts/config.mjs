@@ -30,6 +30,11 @@ export const NOTIFY_EVENTS = ["blocked", "silent", "asleep", "merged", "question
 // One designated agent may start subagents of its own, for adversarial review of its own diff and for
 // running checks only: by default one agent, up to 2 subagents, so its pull request
 // needn't wait for another agent to pick it up. Present on an agent means allowed; absent means not.
+// Briefs kept ready behind each agent's current one, and spare ones held for whichever agent runs out
+// first (desk.json's ready and spare): one and none unless the owner asks for more.
+export const DEFAULT_READY = 1;
+export const MAX_READY = 5;
+export const MAX_SPARE = 10;
 export const SUBAGENT_SCOPES = ["review", "checks"];
 export const DEFAULT_SUBAGENTS = 2;
 export const MAX_SUBAGENTS = 4;
@@ -65,7 +70,10 @@ export function configProblems(cfg) {
 
   if (cfg.asleep != null && (typeof cfg.asleep !== "string" || Number.isNaN(Date.parse(cfg.asleep)))) out.push("asleep must be the time the owner said good night (desk.mjs goodnight writes it, desk.mjs wake removes it), or left out");
   if (cfg.awake != null && typeof cfg.awake !== "boolean") out.push("awake must be true or false (off unless set): whether agents stay on the desk between steps");
-  if (cfg.autocompact != null && !tokens(cfg.autocompact)) out.push(`autocompact must be a whole number of tokens from ${AUTOCOMPACT_MIN} to ${AUTOCOMPACT_MAX} (${DEFAULT_AUTOCOMPACT} unless set): where an agent's conversation compacts`);
+  if (cfg.ready != null && !(Number.isInteger(cfg.ready) && cfg.ready >= 1 && cfg.ready <= MAX_READY)) out.push(`ready must be a whole number from 1 to ${MAX_READY} (${DEFAULT_READY} unless set): the briefs kept ready behind each agent's current one`);
+  if (cfg.spare != null && !(Number.isInteger(cfg.spare) && cfg.spare >= 0 && cfg.spare <= MAX_SPARE)) out.push(`spare must be a whole number from 0 to ${MAX_SPARE} (none unless set): the spare briefs kept for whichever agent runs out first`);
+  if (cfg.prewrite != null && typeof cfg.prewrite !== "boolean") out.push("prewrite must be true or false (false unless set): whether every wave and brief is written ahead from the spec");
+  if (cfg.autocompact != null && cfg.autocompact !== false && !tokens(cfg.autocompact)) out.push(`autocompact must be false (not set by the skill) or a whole number of tokens from ${AUTOCOMPACT_MIN} to ${AUTOCOMPACT_MAX} (${DEFAULT_AUTOCOMPACT} unless set): where an agent's conversation compacts`);
   if (cfg.silence_minutes != null && !(Number.isInteger(cfg.silence_minutes) && cfg.silence_minutes >= 1 && cfg.silence_minutes <= MAX_SILENCE_MINUTES))
     out.push(`silence_minutes must be a whole number of minutes from 1 to ${MAX_SILENCE_MINUTES} (${DEFAULT_SILENCE_MINUTES} unless set): how long an awake agent may go without a report`);
 
@@ -103,6 +111,7 @@ export function configProblems(cfg) {
     if (a.name === leader.name || a.name === "leader") out.push(`${who}: shares its name with the leader`);
     if (!TOOLS.includes(a.tool)) out.push(`${who}: tool “${a.tool ?? ""}” isn't one of ${TOOLS.join(", ")}`);
     if (a.model != null && !short(a.model, 80)) out.push(`${who}: model must be a short name, or null for the tool's own choice`);
+    if (a.models != null && !(Array.isArray(a.models) && a.models.length > 0 && a.models.every((m) => short(m, 80)))) out.push(`${who}: models must list the names of the models it may use, or be left out for any`);
     if (!short(a.job, 300)) out.push(`${who}: job is missing (what this agent is for, in a line)`);
     if (a.reviewer !== "leader" && (a.reviewer === a.name || !names.includes(a.reviewer)))
       out.push(`${who}: reviewer “${a.reviewer ?? ""}” must be another agent on the desk, or "leader"`);
@@ -228,6 +237,12 @@ export function moveAgents(cfg, { who, to, model, startedBy } = {}) {
 
 // Where an agent's conversation compacts: its own figure, else the desk's, else 500,000 tokens.
 export const autocompactOf = (cfg, agent) => tokens(agent?.autocompact) ? agent.autocompact : tokens(cfg?.autocompact) ? cfg.autocompact : DEFAULT_AUTOCOMPACT;
+// Whether the skill sets each tool's compaction at all: desk.json's autocompact false leaves every
+// tool's own setting alone, and nothing is written, said or checked about it.
+export const compactionOn = (cfg) => cfg?.autocompact !== false;
+// The models an agent may use: its list, or null for any. A name is matched without regard to case.
+export const allowedModels = (agent) => Array.isArray(agent?.models) && agent.models.length ? agent.models : null;
+export const modelAllowed = (agent, model) => { const list = allowedModels(agent); return !list || list.some((m) => m.toLowerCase() === String(model || "").trim().toLowerCase()); };
 // How long an awake agent may go without a report before the desk calls it silent.
 export const silenceMinutes = (cfg) => Number.isInteger(cfg?.silence_minutes) ? cfg.silence_minutes : DEFAULT_SILENCE_MINUTES;
 // Where each tool reads the compaction figure from, for the prompts and the guide.

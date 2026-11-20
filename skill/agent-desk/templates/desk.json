@@ -5,6 +5,9 @@
   "work_branch": "desk/work",
   "awake": false,
   "autocompact": 500000,
+  "ready": 1,
+  "spare": 0,
+  "prewrite": false,
   "silence_minutes": 20,
   "leader": { "name": "leader", "tool": "other", "model": null, "awake": true, "idle_minutes": 60 },
   "agents": [

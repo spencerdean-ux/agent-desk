@@ -1,6 +1,6 @@
 {
   "name": "agent-desk",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "An agent skill that runs a desk of AI coding agents in any GitHub repository: one leader, up to six agents in Claude Code, Codex or Antigravity, working through pull requests.",
   "author": "Spencer Dean",
   "license": "MIT",

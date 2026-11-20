@@ -19,6 +19,8 @@ Read `protocol/lead.md` (in this skill's folder, or fresh from the work branch: 
 | `shape ring\|pairs\|reviewer <agent>` | Setting up or changing the desk |
 | `subagents <agent> on\|off`, `models [<tool>]` | Setting up or changing the desk; Which model for what |
 | `plan`, `up <brief>`, `suite`, `push`, `resolve-lists` | Writing a brief; Checking the desk |
+| `waves`, `up wave <n>`, `review wave <n>`, `spare …` | Pre-writing the waves; Keeping briefs ready, and the spares |
+| `defaults`, `allow <model> for <agent>` | Setting up or changing the desk |
 | `notify issue #N`, `autocompact <tokens> [agent]` | Telling the owner; the command table |
 | `start <agent>` | Agents the leader starts |
 

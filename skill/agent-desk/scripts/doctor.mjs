@@ -97,7 +97,7 @@ export function doctorFindings({ cfg, boardText, briefOf, briefIds = [], statuse
   }
   if (identity.hooksPath) add(`this copy runs the repository's git hooks on every push (core.hooksPath = ${identity.hooksPath}), which the desk's board pushes can't satisfy from their temporary worktree (no node_modules, no receipt)`, HOOKS_FIX);
   if (kitVersion && cfg.kit?.version && cfg.kit.version !== kitVersion) add(`desk.json says the skill's version ${cfg.kit?.version ?? "none"} and this copy's skill is ${kitVersion}`, "node .agents/skills/agent-desk/scripts/install.mjs --target . then commit the install");
-  for (const c of compaction) if (c.exists && !c.ok) add(`${c.file} doesn't hold the compaction figure desk.json sets (${autocompactOf(cfg)} tokens)`, `node .agents/skills/agent-desk/scripts/install.mjs --target . (or write the figure into ${c.file})`);
+  if (cfg.autocompact !== false) for (const c of compaction) if (c.exists && !c.ok) add(`${c.file} doesn't hold the compaction figure desk.json sets (${autocompactOf(cfg)} tokens)`, `node .agents/skills/agent-desk/scripts/install.mjs --target . (or write the figure into ${c.file})`);
   for (const s of subagents) {
     if (!s.exists) add(`${s.file} isn't in this copy: desk.json's subagents ask for that definition, so the tool has no such subagent here`, "node .agents/skills/agent-desk/scripts/install.mjs --target . (or desk.mjs subagents <agent> on), then commit the file");
     else if (!s.ok) add(`${s.file} isn't what desk.json's subagents ask for (its model or words differ)`, "node .agents/skills/agent-desk/scripts/install.mjs --target . (or desk.mjs subagents <agent> on), then commit the file");
@@ -114,7 +114,7 @@ export function doctorFindings({ cfg, boardText, briefOf, briefIds = [], statuse
 export function doctorWords(cfg, findings, notes = []) {
   const la = leaderAwake(cfg);
   const awake = (cfg.agents || []).filter((a) => isAwake(cfg, a)).map((a) => a.name);
-  const settings = `Settings: ${awake.length ? `${awake.join(", ")} awake` : "no agent awake"}; the leader ${cfg.leader?.name} ${la.on ? `awake, asleep after ${la.idleMinutes} idle minutes` : "not awake"}; conversations compact at ${autocompactOf(cfg).toLocaleString("en-GB")} tokens; ${notifyLine(cfg)}${cfg.kit?.version ? ` Kit ${cfg.kit.version}.` : ""}`;
+  const settings = `Settings: ${awake.length ? `${awake.join(", ")} awake` : "no agent awake"}; the leader ${cfg.leader?.name} ${la.on ? `awake, asleep after ${la.idleMinutes} idle minutes` : "not awake"}${cfg.autocompact === false ? "" : `; conversations compact at ${autocompactOf(cfg).toLocaleString("en-GB")} tokens`}; ${notifyLine(cfg)}${cfg.kit?.version ? ` Kit ${cfg.kit.version}.` : ""}`;
   const where = `${cfg.project} (${cfg.work_branch}${notes.length ? `; ${notes.join("; ")}` : ""})`;
   if (!findings.length) return `The desk for ${where} is in order: nothing to fix.\n${settings}`;
   const lines = [`Doctor for ${where}:`];

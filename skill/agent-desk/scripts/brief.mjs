@@ -17,12 +17,15 @@ export const ID = /^[A-Za-z0-9][A-Za-z0-9-]{1,60}$/;
 // dropped. Throws, in words, when it can't be addressed. Pure: the caller writes the file.
 export function newBrief(template, cfg, { id, slot, spec, title, reviewer, goal, context }) {
   if (!ID.test(id || "")) throw new Error(`id “${id ?? ""}” must be letters, digits and hyphens, such as A3-launch-page`);
-  const agent = agentNamed(cfg, slot);
+  // A spare brief (slot any) is held in the queue for whichever agent runs out first: its reviewer,
+  // branch and port are filled in when it goes up (assignSpare).
+  const spare = slot === "any";
+  const agent = spare ? { port: "any", reviewer: "any" } : agentNamed(cfg, slot);
   if (!agent) throw new Error(`“${slot ?? ""}” isn't an agent on the desk (${(cfg.agents || []).map((a) => a.name).join(", ")})`);
   if (!spec || !String(spec).trim()) throw new Error("name the spec step with --spec <step>");
   if (!title || !String(title).trim()) throw new Error('give the brief a title with --title "<one line>"');
   const who = reviewer || agent.reviewer;
-  if (who !== "leader" && (who === slot || !agentNamed(cfg, who))) throw new Error(`reviewer “${who}” must be another agent on the desk, or "leader"`);
+  if (!spare && who !== "leader" && (who === slot || !agentNamed(cfg, who))) throw new Error(`reviewer “${who}” must be another agent on the desk, or "leader"`);
   const m = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(String(template || ""));
   if (!m) throw new Error("the template has no front matter: install the skill again");
   const values = { id, project: cfg.project, slot, reviewer: who, spec: String(spec).trim(), title: String(title).trim().replace(/\n/g, " "), base: cfg.work_branch, branch: `desk/${cfg.project}/${slot}/${id}`, port: String(agent.port) };
@@ -125,6 +128,21 @@ function setField(text, key, value, after) {
     lines.splice(i >= 0 ? i + 1 : lines.length, 0, `${key}: ${value}`);
   }
   return `---\n${lines.join("\n")}\n---` + text.slice(m[0].length);
+}
+
+// A queued brief's wave (desk.mjs brief --wave): the round it is worked in.
+export const withWave = (text, n) => setField(String(text), "wave", String(n), "port");
+
+// A spare brief given to an agent (desk.mjs up <id> --for <agent>): its slot, branch and port are the
+// agent's, and its reviewer the agent's own.
+export function assignSpare(text, cfg, to) {
+  const agent = agentNamed(cfg, to);
+  if (!agent) throw new Error(`“${to ?? ""}” isn't an agent on the desk (${(cfg.agents || []).map((a) => a.name).join(", ")})`);
+  const b = parseBrief(text);
+  let out = setField(String(text), "slot", to);
+  out = setField(out, "reviewer", agent.reviewer && agent.reviewer !== to ? agent.reviewer : "leader");
+  out = setField(out, "branch", `desk/${cfg.project}/${to}/${b.id}`);
+  return setField(out, "port", String(agent.port));
 }
 
 // The brief with another reviewer (desk.mjs shape).

@@ -2284,7 +2284,7 @@ test("waves: the queue's briefs are laid out wave by wave, a whole wave goes up 
     r = deskRun(lead, "waves", "--review", "1");
     assert.equal(r.status, 0, r.stdout + r.stderr); assert.match(r.stdout, /10 minutes/); assert.match(r.stdout, /W2-a/); assert.match(r.stdout, /waves --reviewed 1/);
     assert.ok(!/over/.test(deskRun(lead, "status").stdout.split("\n").filter((l) => /wave/i.test(l)).join("\n")));
-    d.L("config", "desk.waves.review.1", new Date(Date.now() - 12 * 60000).toISOString());
+    d.L("config", "desk.wavereview.1.started", new Date(Date.now() - 12 * 60000).toISOString());
     assert.match(deskRun(lead, "status").stdout, /wave 1's review has run 12 minutes, over its 10/i);
     assert.match(deskRun(lead, "waves", "--review", "1").stdout, /over/i);
     r = deskRun(lead, "waves", "--reviewed", "1"); assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /12 minutes/);

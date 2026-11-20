@@ -53,13 +53,15 @@ import { readFileSync, writeFileSync, existsSync, readdirSync, mkdtempSync, mkdi
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
-import { parseConfig, configProblems, agentNamed, isAwake, leaderAwake, moveAgents, autocompactOf, silenceMinutes, compactionFiles, subagentsOf, subagentFiles, notifyOf, portEnv, PROJECT, FORBIDDEN_BASES, shapeReviewers, SHAPES, AUTOCOMPACT_MIN, AUTOCOMPACT_MAX, NOTIFY_EVENTS, SUBAGENT_SCOPES, DEFAULT_SUBAGENTS, MAX_SUBAGENTS, TOOLS, TOOL_WORDS } from "./config.mjs";
+import { parseConfig, configProblems, agentNamed, isAwake, leaderAwake, moveAgents, autocompactOf, silenceMinutes, compactionFiles, subagentsOf, subagentFiles, notifyOf, MAX_AGENTS, compactionOn, allowedModels, modelAllowed, portEnv, PROJECT, FORBIDDEN_BASES, shapeReviewers, SHAPES, AUTOCOMPACT_MIN, AUTOCOMPACT_MAX, NOTIFY_EVENTS, SUBAGENT_SCOPES, DEFAULT_SUBAGENTS, MAX_SUBAGENTS, TOOLS, TOOL_WORDS } from "./config.mjs";
 import { MODELS, modelWords } from "./models.mjs";
 import { PHASES, LEADER_PHASES, parseStatus, statusProblems, statusWords, sameReport, silence } from "./status.mjs";
-import { parseBrief, briefProblems, briefSections, newBrief, reassignBrief, withReviewer } from "./brief.mjs";
+import { parseBrief, briefProblems, briefSections, newBrief, reassignBrief, withReviewer, withWave, assignSpare } from "./brief.mjs";
 import { nodeCounts, failingFiles, partWords } from "./suite.mjs";
 import { codeFacts } from "./facts.mjs";
 import { planDesk } from "./plan.mjs";
+import { DEFAULTS_PATH, SETTINGS, SKILL_DEFAULTS, TEAM_TOOLS, parseDefaults, defaultsProblems, readSetting, settingArg, defaultsWords, buildTeam } from "./defaults.mjs";
+import { WAVE_REVIEW_MINUTES, waveOf, waveWords, reviewWords } from "./waves.mjs";
 import { mergeJsonList, listProblems } from "./lists.mjs";
 import { parseBoard, boardProblems, renderBoard, updateRow, prNumber, STATES } from "./board.mjs";
 import { agentPrompt, nextStep } from "./prompts.mjs";
@@ -114,6 +116,9 @@ const USAGE = [
   "  notify --setup --issue <N> [--events a,b] | notify --setup --create | notify --setup off   where the owner is told (--create makes the issue); notify alone says",
   "  goodnight                                       the owner's good night: agents stop at their next look, then the desk; nothing moves until wake",
   "  wake                                            the owner's go at the leader: the desk is awake again, and names each agent's conversation to type go in",
+  "  defaults [--set <key>=<value>] [--reset [key]]  this repository's defaults for new projects (agents/desk/defaults.json)",
+  "  models check|allow|disallow \"<model>\" [--agent <name>] [--push]   the models an agent may use",
+  "  waves | waves --review <n> | waves --reviewed <n>   the queue laid out wave by wave, and the ten-minute review after one; up --wave <n> puts one up",
   "  end [--yes] [--force]                           end the project: lists its branches; --yes archives the desk, deletes them and closes its pull requests and issue",
   "  preflight <brief id> [--pr #N] [--no-run]       desk-check and the pull request report, written under .git/desk/ (an agent's own)",
   "  next [agent] [--list] | --done <ID> | --skip <ID> | --open <ID> [--note \"…\"]   the next spec step for each agent without a brief; the marks in agents/desk/progress.json",
@@ -365,13 +370,46 @@ function setup(top, named) {
       console.error(`setup needs a work branch for ${project}: this checkout is on ${here === "HEAD" || !here ? "no branch" : here}, ${FORBIDDEN_BASES.includes(branch) || branch === def ? "which agents never work straight into" : "so there is none to take"}. Make one and name it: git switch -c work/${project} && node ${SKILL_HOME}/scripts/desk.mjs setup --project ${project} --work-branch work/${project}`);
       return 2;
     }
-    cfg = { ...JSON.parse(skillFile("templates/desk.json")), project, repository: repo, work_branch: branch };
+    const template = JSON.parse(skillFile("templates/desk.json"));
+    cfg = { ...template, project, repository: repo, work_branch: branch };
+    // The settings in effect: the skill's own, then this repository's defaults, then the owner's answers.
+    const kept = parseDefaults(existsSync(join(top, DEFAULTS_PATH)) ? readFileSync(join(top, DEFAULTS_PATH), "utf8") : null);
+    const wrongDefaults = defaultsProblems(kept);
+    if (wrongDefaults.length) { console.error(`${DEFAULTS_PATH} is wrong, so nothing was written:\n  ${wrongDefaults.join("\n  ")}\nMend it, or take it away: node ${SKILL_HOME}/scripts/desk.mjs defaults --reset`); return 2; }
+    const answers = {};
+    const OPTIONS = { agents: "agents", claude: "claude", codex: "codex", antigravity: "antigravity", ready: "ready", spare: "spare", prewrite: "prewrite", specs: "specs", shape: "shape", awake: "awake", silence: "silence_minutes", idle: "idle_minutes", autocompact: "autocompact", subagents: "subagents" };
+    try {
+      for (const [opt, key] of Object.entries(OPTIONS)) if (named[opt] !== undefined) answers[key] = readSetting(`${key}=${named[opt] === "" && ["prewrite", "awake", "subagents"].includes(key) ? "on" : named[opt]}`)[1];
+    } catch (err) { console.error(`The desk can't be set up like that; nothing was written: ${err.message}`); return 2; }
+    const base = { ...SKILL_DEFAULTS, ...kept };
+    const e = { ...base, ...answers };
+    // Counts per tool given at setup stand on their own; a bare --agents sets aside any kept per tool.
+    const counted = TEAM_TOOLS.map(([k]) => k);
+    if (counted.some((k) => k in answers)) { for (const k of counted) if (!(k in answers) && !(k in kept)) e[k] = 0; }
+    else if ("agents" in answers) for (const k of counted) e[k] = 0;
+    const sum = counted.reduce((n, k) => n + (e[k] || 0), 0);
+    if ("agents" in answers && counted.some((k) => k in answers) && sum !== answers.agents) { console.error(`The desk can't be set up like that; nothing was written: --agents ${answers.agents} and the counts for each tool (${sum}) don't add up. Give one or the other.`); return 2; }
+    if (sum > MAX_AGENTS) { console.error(`The desk can't be set up like that; nothing was written: a desk has 6 agents at most, and ${sum} were asked for.`); return 2; }
+    try { cfg.agents = buildTeam(e, template); } catch (err) { console.error(`The desk can't be set up like that; nothing was written: ${err.message}`); return 2; }
+    // The models each agent may use, by its name or for every agent of a tool: "claude-a=One|Two;codex=Three".
+    for (const part of String(named.models || "").split(";").map((x) => x.trim()).filter(Boolean)) {
+      const m = /^([a-z0-9-]+)=(.+)$/.exec(part);
+      const list = m ? m[2].split("|").map((x) => x.trim()).filter(Boolean) : [];
+      const who = m ? cfg.agents.filter((a) => a.name === m[1] || a.tool === m[1]) : [];
+      if (!m || !list.length || !who.length) { console.error(`The desk can't be set up like that; nothing was written: --models “${part}” names ${m ? `nobody on this desk (${m[1]}; the agents are ${cfg.agents.map((a) => a.name).join(", ")})` : "no agent: write <agent or tool>=<model>|<model>"}.`); return 2; }
+      for (const a of who) a.models = list;
+    }
+    cfg.ready = e.ready; cfg.spare = e.spare; cfg.prewrite = e.prewrite; cfg.specs = e.specs; cfg.awake = e.awake;
+    cfg.silence_minutes = e.silence_minutes; cfg.autocompact = e.autocompact; cfg.leader = { ...cfg.leader, idle_minutes: e.idle_minutes };
+    // What the owner chose that isn't a default yet, to be offered as one.
+    cfg.__differs = Object.keys(answers).filter((k) => JSON.stringify(answers[k]) !== JSON.stringify(base[k])).map((k) => settingArg(k, answers[k]));
     // The leader is whoever runs setup: its own name and tool, never one assumed.
     if (named.leader) cfg.leader = { ...cfg.leader, name: named.leader };
     if (named["leader-tool"]) cfg.leader = { ...cfg.leader, tool: named["leader-tool"] };
     if (named.title) cfg.title = named.title;
     else delete cfg.title;
   }
+  const differs = cfg.__differs || []; delete cfg.__differs;
   cfg.kit = { version: skillVersion() };
   const problems = configProblems(cfg);
   if (problems.length) { console.error(`${fresh ? "The desk can't be set up like that" : `${path} has problems`}; nothing was written:\n  ${problems.join("\n  ")}`); return 2; }
@@ -386,12 +424,47 @@ function setup(top, named) {
     `Also written, for the whole repository: ${written.join(", ")}.`,
     others.length ? `Other projects here, each on its own: ${others.join(", ")}. Add --project ${project} to this desk's commands, or once for this copy: git config desk.project ${project}.` : "",
     REPO_SKILL_HOMES.every((h) => existsSync(join(top, h, SKILL_NAME, "SKILL.md"))) ? "" : `The skill itself isn't in this repository yet, so a cloud agent can't read its steps: node <this skill>/scripts/install.mjs --target . puts it in ${REPO_SKILL_HOMES.join("/ and ")}/.`,
+    fresh && differs.length ? `These answers differ from the defaults: ${differs.join(", ")}. Ask the owner, once, whether any becomes the new default for future projects in this repository; for each yes: node ${SKILL_HOME}/scripts/desk.mjs defaults --set <key>=<value>.` : "",
+    fresh && cfg.awake && !notifyOf(cfg) ? `Automatic checking is on and nobody is told when an agent goes silent: node ${SKILL_HOME}/scripts/desk.mjs notify --setup --create --project ${project} makes the issue.` : "",
     fresh ? `Change who works on what in ${path} (the agents, their tools, models, jobs and reviewers), then: node ${SKILL_HOME}/scripts/desk.mjs sync-board --project ${project} && node ${SKILL_HOME}/scripts/desk.mjs validate --project ${project}.` : "",
     `Next: commit and push to ${cfg.work_branch}. Then start each agent with its wording below (node ${SKILL_HOME}/scripts/desk.mjs prompts --project ${project} gives it again at any time):`,
     "",
     spinUp(cfg, cfg.agents.map((a) => a.name)),
   ].filter((l, i, a) => l !== "" || a[i + 1] !== undefined && i === a.length - 2).join("\n"));
   return 0;
+}
+
+// The owner's defaults for new projects in this repository (agents/desk/defaults.json): shown, set
+// one at a time, or taken away. Setup reads them; nothing else does, so a project already set up
+// never changes when they do.
+function defaults(top, plain, named) {
+  const file = join(top, DEFAULTS_PATH);
+  const kept = parseDefaults(existsSync(file) ? readFileSync(file, "utf8") : null);
+  const pairs = [...(plain[0] === "set" ? plain.slice(1) : []), ...(typeof named.set === "string" && named.set ? [named.set] : [])];
+  if (named.reset !== undefined || plain[0] === "reset") {
+    const keys = [...(plain[0] === "reset" ? plain.slice(1) : []), ...(named.reset ? [named.reset] : [])];
+    if (!keys.length) { if (existsSync(file)) rmSync(file); console.log(`This repository keeps no defaults of its own now: a new project starts from the skill's own.${existsSync(file) ? "" : " Next: commit and push."}`); return 0; }
+    const next = kept.error ? {} : { ...kept };
+    for (const k of keys) { if (!SETTINGS[k]) { console.error(`“${k}” isn't a setting a default is kept for: ${Object.keys(SETTINGS).join(", ")}`); return 1; } delete next[k]; }
+    if (Object.keys(next).length) writeFileSync(file, JSON.stringify(next, null, 2) + "\n"); else if (existsSync(file)) rmSync(file);
+    console.log(`${keys.join(", ")} ${keys.length === 1 ? "is" : "are"} back to the skill's own. Next: commit and push ${DEFAULTS_PATH}.`);
+    return 0;
+  }
+  if (pairs.length || named.set !== undefined || plain[0] === "set") {
+    if (!pairs.length) { console.error(`Usage: node ${SKILL_HOME}/scripts/desk.mjs defaults --set <key>=<value>   (${Object.keys(SETTINGS).join(", ")})`); return 2; }
+    if (kept.error) { console.error(`${DEFAULTS_PATH} ${kept.error}: mend it, or defaults --reset`); return 1; }
+    const next = { ...kept };
+    try { for (const p of pairs) { const [k, v] = readSetting(p); next[k] = v; } } catch (err) { console.error(`Not set: ${err.message}`); return 1; }
+    const wrong = defaultsProblems(next);
+    if (wrong.length) { console.error(`Not set: ${wrong.join("; ")}`); return 1; }
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, JSON.stringify(next, null, 2) + "\n");
+    console.log(`Kept as this repository's default${pairs.length === 1 ? "" : "s"}: ${pairs.join(", ")}. A new project here starts from ${pairs.length === 1 ? "it" : "them"}; projects already set up are as they were. Next: commit and push ${DEFAULTS_PATH}.`);
+    return 0;
+  }
+  const wrong = defaultsProblems(kept);
+  console.log(defaultsWords(kept.error ? {} : kept) + (wrong.length ? `\n\n${DEFAULTS_PATH} is wrong, and setup refuses it:\n  ${wrong.join("\n  ")}` : `\n\nChange one: node ${SKILL_HOME}/scripts/desk.mjs defaults --set <key>=<value>; put one back: defaults --reset <key>.`));
+  return wrong.length ? 1 : 0;
 }
 
 // A desk from before each project had a folder of its own (agents/desk/desk.json, the steps and scripts
@@ -444,6 +517,7 @@ function main(argv) {
   if (!cmd || cmd === "help" || cmd === "--help") { console.log(USAGE); return cmd ? 0 : 2; }
   if (cmd === "setup") return setup(top, named);
   if (cmd === "migrate") return migrate(top);
+  if (cmd === "defaults") return defaults(top, plain, named);
   if (read(`${DESK_ROOT}/desk.json`) !== null && projectsAt(top, at).length === 0) { console.error(`This repository holds a desk from before the skill kept each project in a folder of its own (${DESK_ROOT}/desk.json). Move it with: node ${SKILL_HOME}/scripts/desk.mjs migrate`); return 2; }
   // Which project: the one named, else this copy's own (git config desk.project), else the only one here.
   const all = projectsAt(top, at);
@@ -510,7 +584,12 @@ function main(argv) {
       }
       const ls = statusOf(cfg.leader.name);
       out.push("", `The leader ${cfg.leader.name} says: ${ls && !ls.error ? statusWords(ls, now) : "nothing yet"}. An awake agent is silent after ${silenceMinutes(cfg)} minutes without a report (silence_minutes).`);
-      out.push(`Conversations compact at ${autocompactOf(cfg).toLocaleString("en-GB")} tokens${cfg.agents.some((a) => a.autocompact != null) ? ` (${cfg.agents.filter((a) => a.autocompact != null).map((a) => `${a.name}: ${autocompactOf(cfg, a).toLocaleString("en-GB")}`).join(", ")})` : ""} (node .agents/skills/agent-desk/scripts/desk.mjs autocompact <tokens> [agent]).`);
+      for (const a of cfg.agents) if (allowedModels(a)) out.push(`${a.name} may use: ${allowedModels(a).join(", ")} (it stops on any other model; node .agents/skills/agent-desk/scripts/desk.mjs models allow "<model>" --agent ${a.name} adds one).`);
+      { const open = (spawnSync("git", ["config", "--get-regexp", "^desk\\.wavereview\\..*\\.started$"], { cwd: top, encoding: "utf8" }).stdout || "").split("\n").filter(Boolean);
+        for (const l of open) { const [k, at] = l.split(" "); const n = k.split(".")[2], mins = Math.floor((now - Date.parse(at)) / 60000);
+          out.push(mins > WAVE_REVIEW_MINUTES ? `Wave ${n}'s review has run ${mins} minutes, over its ${WAVE_REVIEW_MINUTES}: put the next wave up as it stands, tell the owner what wasn't checked, and close it (node .agents/skills/agent-desk/scripts/desk.mjs waves --reviewed ${n}).` : `Wave ${n}'s review is open (${Math.max(0, mins)} of ${WAVE_REVIEW_MINUTES} minutes).`); } }
+      if (!compactionOn(cfg)) out.push("Where a conversation compacts is not set by the skill on this desk (desk.json's autocompact is false): each tool keeps its own setting.");
+      else out.push(`Conversations compact at ${autocompactOf(cfg).toLocaleString("en-GB")} tokens${cfg.agents.some((a) => a.autocompact != null) ? ` (${cfg.agents.filter((a) => a.autocompact != null).map((a) => `${a.name}: ${autocompactOf(cfg, a).toLocaleString("en-GB")}`).join(", ")})` : ""} (node .agents/skills/agent-desk/scripts/desk.mjs autocompact <tokens> [agent]).`);
       const subs = cfg.agents.map((a) => [a, subagentsOf(cfg, a)]).filter(([, s]) => s);
       out.push(subs.length
         ? `Subagents: ${subs.map(([a, s]) => `${a.name} up to ${s.max} (${s.scope.join(", ")}) on ${s.scope.map((k) => `${s.models[k]} for ${k}`).join(", ")}`).join("; ")}${subs.length < cfg.agents.length ? `; ${cfg.agents.filter((a) => !subagentsOf(cfg, a)).map((a) => a.name).join(", ")} none` : ""} (node .agents/skills/agent-desk/scripts/desk.mjs subagents <agent> on|off).`
@@ -573,13 +652,18 @@ function main(argv) {
         if (!fromSpec) { console.error(`${named["from-spec"] || "(nothing)"} isn't a step in ${cfg.specs || "the spec"}${steps.length ? ` (${steps.map((st) => st.id).join(", ")})` : " (no \`### A1. Title\` heading found)"}`); return 1; }
       }
       const template = skillFile("templates/brief.md");
-      const file = `${ASSIGNMENTS}/${id}.md`;
-      if (read(file) !== null) { console.error(`${file} exists already, and a brief is never written over: pick another id, or edit that one`); return 1; }
+      const queued = named.queue !== undefined;
+      if (named.for === "any" && !queued) { console.error("Not written: a brief for anyone is a spare, and a spare waits in the queue: add --queue. It goes up with desk.mjs up <id> --for <agent>."); return 1; }
+      if (named.wave !== undefined && !/^[1-9]\d{0,2}$/.test(named.wave)) { console.error("Not written: --wave takes the wave's number, from 1"); return 1; }
+      const file = `${queued ? QUEUE : ASSIGNMENTS}/${id}.md`;
+      if (read(`${ASSIGNMENTS}/${id}.md`) !== null || read(file) !== null) { console.error(`${file} exists already, and a brief is never written over: pick another id, or edit that one`); return 1; }
       let text;
       try { text = newBrief(template, cfg, { id, slot: named.for, spec: fromSpec ? fromSpec.id : named.spec, title: named.title || (fromSpec ? fromSpec.title.slice(0, 120) : undefined), reviewer: named.reviewer, goal: fromSpec ? stepGoal(fromSpec) : undefined, context: fromSpec ? stepContext(fromSpec) : undefined }); }
       catch (err) { console.error(`Not written: ${err.message}`); return 1; }
-      mkdirSync(join(top, ASSIGNMENTS), { recursive: true });
+      if (named.wave !== undefined) text = withWave(text, named.wave);
+      mkdirSync(join(top, queued ? QUEUE : ASSIGNMENTS), { recursive: true });
       writeFileSync(join(top, file), text);
+      if (queued) { console.log(`${file} is queued${named.for === "any" ? " as a spare, for whichever agent runs out first" : ` for ${named.for}`} on ${cfg.project}${named.wave !== undefined ? `, in wave ${named.wave}` : ""}.\nNext: fill in may_change, frozen and checks, and the sections under them; put its frozen tests beside it under ${QUEUE}/; commit. It goes up with node .agents/skills/agent-desk/scripts/desk.mjs up ${id}${named.for === "any" ? " --for <agent>" : ""}.`); return 0; }
       console.log([
         `${file} is addressed to ${named.for} on ${cfg.project} (reviewer ${parseBrief(text).reviewer}, branch ${parseBrief(text).branch}).`,
         "Next: fill in may_change, frozen and checks, and the sections under them; commit it with its frozen tests;",
@@ -709,6 +793,55 @@ function main(argv) {
       return 0;
     }
     case "models": {
+      // The models one agent may use (desk.json's models on its entry): check says whether a model is
+      // on the list, allow and disallow change it, here or with --push on the work branch from any
+      // copy, an agent's own included, which is how the owner's "allow this model" is done.
+      if (["check", "allow", "disallow"].includes(plain[0])) {
+        const [verb, model] = plain;
+        const who = named.agent || gitConf(top, "desk.slot");
+        if (!model || !String(model).trim()) { console.error(`Usage: node .agents/skills/agent-desk/scripts/desk.mjs models ${verb} "<model>" [--agent <name>]${verb === "check" ? "" : " [--push]"}`); return 2; }
+        if (!who) { console.error("Say whose list: --agent <name> (an agent's own copy knows its name)."); return 2; }
+        const a = agentNamed(cfg, who);
+        if (!a) { console.error(`“${who}” isn't an agent on this desk (${cfg.agents.map((x) => x.name).join(", ")})`); return 1; }
+        const allow = `node .agents/skills/agent-desk/scripts/desk.mjs models allow "${model}"${named.agent ? ` --agent ${who}` : ""} --push`;
+        if (verb === "check") {
+          const list = allowedModels(a);
+          if (!list) { console.log(`${who} may run on any model on ${cfg.project} (its desk entry lists none).`); return 0; }
+          if (modelAllowed(a, model)) { console.log(`${model} is allowed for ${who} on ${cfg.project}.`); return 0; }
+          console.log(`${model} isn't on ${who}'s list (${list.join(", ")}) on ${cfg.project}. Do no work: report blocked, tell the owner both, and stop. The owner switches the model in this tool, or types "allow this model", which is: ${allow}`);
+          return 1;
+        }
+        const change = (there) => {
+          const b = agentNamed(there, who);
+          if (!b) throw new Error(`${who} isn't on the ${there.project} desk any more`);
+          const list = allowedModels(b) || [];
+          const has = list.some((m) => m.toLowerCase() === model.trim().toLowerCase());
+          if (verb === "allow" ? has : !has) return null;
+          const nextList = verb === "allow" ? [...list, model.trim()] : list.filter((m) => m.toLowerCase() !== model.trim().toLowerCase());
+          const next = { ...there, agents: there.agents.map((x) => { if (x.name !== who) return x; const y = { ...x }; if (nextList.length) y.models = nextList; else delete y.models; return y; }) };
+          const problems = configProblems(next);
+          if (problems.length) throw new Error(problems.join("; "));
+          return { next, words: verb === "allow" ? `${who} may now run on ${model.trim()} too (its list: ${nextList.join(", ")}).` : `${who} may no longer run on ${model.trim()} (${nextList.length ? `its list: ${nextList.join(", ")}` : "it has no list now, so any model"}).` };
+        };
+        const same = verb === "allow" ? `${model} is already on ${who}'s list: nothing changed.` : `${model} isn't on ${who}'s list: nothing changed.`;
+        try {
+          if (named.push !== undefined) {
+            console.log(pushToBase(top, cfg.work_branch, (wt, there, slot) => {
+              const c = change(there);
+              if (!c) return { skip: same };
+              writeFileSync(join(wt, CONFIG_PATH), JSON.stringify(c.next, null, 2) + "\n");
+              return { message: [`desk(${there.project}): ${who} ${verb === "allow" ? "may use" : "may not use"} ${model.trim()} (the owner's word${slot ? `, from ${slot}'s copy` : ""})`, "", `Desk-Project: ${there.project}`, ...(slot ? [`Desk-Agent: ${slot}`] : [])].join("\n"), say: c.words };
+            }));
+            return 0;
+          }
+          if (ref) { console.error(`models ${verb} writes desk.json in this checkout, or with --push on the work branch from any copy: never through --ref`); return 2; }
+          const c = change(cfg);
+          if (!c) { console.log(same); return 0; }
+          writeFileSync(join(top, CONFIG_PATH), JSON.stringify(c.next, null, 2) + "\n");
+          console.log(`${c.words} Next: commit and push desk.json.`);
+          return 0;
+        } catch (err) { console.error(`Not changed: ${err.message}`); return 1; }
+      }
       const [tool] = plain;
       if (tool && !TOOLS.includes(tool)) { console.error(`“${tool}” isn't a tool the desk knows: ${TOOLS.join(", ")}`); return 1; }
       const tools = tool ? [tool] : TOOLS.filter((t) => MODELS[t].length);
@@ -817,7 +950,7 @@ function main(argv) {
       const statuses = {};
       for (const n of statusNames(top, at2)) statuses[n] = parseStatus(read2(`${STATUS_DIR}/${n}.json`));
       let kitVersion = null; try { kitVersion = skillVersion(); } catch { kitVersion = null; }
-      const compaction = compactionFiles(autocompactOf(cfg2)).map((c) => { const t = existsSync(join(top, c.file)) ? readFileSync(join(top, c.file), "utf8") : null; return { file: c.file, exists: t !== null, ok: t !== null && c.ok(t) }; });
+      const compaction = (compactionOn(cfg2) ? compactionFiles(autocompactOf(cfg2)) : []).map((c) => { const t = existsSync(join(top, c.file)) ? readFileSync(join(top, c.file), "utf8") : null; return { file: c.file, exists: t !== null, ok: t !== null && c.ok(t) }; });
       const subagents = subagentFiles(cfg2).map((f) => { const t = existsSync(join(top, f.file)) ? readFileSync(join(top, f.file), "utf8") : null; return { file: f.file, exists: t !== null, ok: t !== null && f.ok(t) }; });
       const lists = (cfg2.shared_lists || []).filter((s) => !s.rebuild && s.file.endsWith(".json")).map((s) => { const t = read2(s.file); return { file: s.file, problems: t === null ? [] : listProblems(t) }; });
       const findings = doctorFindings({ cfg: cfg2, boardText: read2(BOARD), briefOf: (id) => { const t = read2(`${ASSIGNMENTS}/${id}.md`); return t === null ? null : parseBrief(t); }, briefIds: briefIds(top, at2), statuses, heads, isMerged, identity, kitVersion, prs, compaction, subagents, lists });
@@ -1088,14 +1221,39 @@ function main(argv) {
     }
     case "up": {
       if (ref) { console.error("up moves the brief in this checkout: run it on the work branch, without --ref"); return 2; }
+      const mv = (a, z) => { mkdirSync(join(top, dirname(z)), { recursive: true }); if (spawnSync("git", ["mv", a, z], { cwd: top }).status !== 0) renameSync(join(top, a), join(top, z)); };
+      // A whole wave at once: every queued brief of that wave, each for its own agent, or none of them.
+      if (named.wave !== undefined) {
+        const wave = queueFiles(top, at).map((f) => [f, read(f)]).filter(([, t]) => t !== null).map(([f, t]) => [f, parseBrief(t)]).filter(([, q]) => q.slot !== "any" && String(waveOf(q)) === String(named.wave));
+        if (!wave.length) { console.error(`Not put up: no queued brief is in wave ${named.wave || "(none given)"}: desk.mjs waves lists them`); return 1; }
+        const busyNow = wave.map(([, q]) => [q, board.slots[q.slot]]).filter(([, r]) => r && KEEP_WHEN_REMOVED.has(r.state));
+        if (busyNow.length) { console.error(`Not put up, and nothing was moved: ${busyNow.map(([q, r]) => `${q.slot} is ${r.state} with ${r.brief}`).join("; ")}. A wave goes up once the one before it has merged.`); return 1; }
+        const twice = wave.map(([, q]) => q.slot).filter((s, i, all) => all.indexOf(s) !== i);
+        if (twice.length) { console.error(`Not put up: wave ${named.wave} holds more than one brief for ${[...new Set(twice)].join(", ")}; an agent works one brief at a time`); return 1; }
+        let rows = board.slots;
+        for (const [f, q] of wave) {
+          mv(f, `${ASSIGNMENTS}/${q.id}.md`);
+          for (const t of q.frozen) if (existsSync(join(top, QUEUE, t))) mv(`${QUEUE}/${t}`, t);
+          rows = updateRow(rows, cfg, q.slot, { state: "ready", brief: q.id, pr: "" });
+        }
+        writeFileSync(join(top, BOARD), renderBoard(cfg, rows));
+        console.log(`Wave ${named.wave} is up on ${cfg.project}: ${wave.map(([, q]) => `${q.id} for ${q.slot}`).join(", ")}.\nNext: read each against the code as it stands now, run its frozen tests and see them red for the reason the brief gives, commit, validate, then node .agents/skills/agent-desk/scripts/desk.mjs push.`);
+        return 0;
+      }
       const [id] = plain;
-      if (!id) { console.error("Usage: node .agents/skills/agent-desk/scripts/desk.mjs up <brief id>   (a brief in agents/desk/queue/)"); return 2; }
-      const from = `${QUEUE}/${id}.md`, text = read(from);
+      if (!id) { console.error("Usage: node .agents/skills/agent-desk/scripts/desk.mjs up <brief id> [--for <agent>]   (a brief in agents/desk/queue/; --for gives a spare to an agent)\n       node .agents/skills/agent-desk/scripts/desk.mjs up --wave <n>"); return 2; }
+      const from = `${QUEUE}/${id}.md`;
+      let text = read(from);
       if (text === null) { console.error(`${from} isn't here: desk.mjs plan lists the queue`); return 1; }
-      const b = parseBrief(text);
+      let b = parseBrief(text);
+      if (b.slot === "any") {
+        if (!named.for) { console.error(`Not put up: ${id} is a spare, for anyone: say who takes it with --for <agent> (${cfg.agents.map((a) => a.name).join(", ")})`); return 1; }
+        try { text = assignSpare(text, cfg, named.for); } catch (err) { console.error(`Not put up: ${err.message}`); return 1; }
+        b = parseBrief(text);
+      } else if (named.for && named.for !== b.slot) { console.error(`Not put up: ${id} is ${b.slot}'s, not a spare. desk.mjs reassign hands an open brief on.`); return 1; }
       const busy = board.slots[b.slot];
       if (busy && KEEP_WHEN_REMOVED.has(busy.state)) { console.error(`Not put up: ${b.slot} is ${busy.state} with ${busy.brief}`); return 1; }
-      const mv = (a, z) => { mkdirSync(join(top, dirname(z)), { recursive: true }); if (spawnSync("git", ["mv", a, z], { cwd: top }).status !== 0) renameSync(join(top, a), join(top, z)); };
+      if (text !== read(from)) writeFileSync(join(top, from), text);
       mv(from, `${ASSIGNMENTS}/${id}.md`);
       const moved = [];
       for (const f of b.frozen) if (existsSync(join(top, QUEUE, f))) { mv(`${QUEUE}/${f}`, f); moved.push(f); }
@@ -1104,6 +1262,29 @@ function main(argv) {
       if (probs.length) { console.error(`Put up, but the board isn't right: ${probs.join("; ")}`); return 1; }
       writeFileSync(join(top, BOARD), renderBoard(cfg, rows));
       console.log(`${id} is up for ${b.slot} on ${cfg.project}${moved.length ? `, with ${moved.join(", ")}` : ""}.\nNext: read it against the code as it stands now, run its frozen tests and see them red for the reason the brief gives, commit it as its red commit, validate, then node .agents/skills/agent-desk/scripts/desk.mjs push.`);
+      return 0;
+    }
+    case "waves": {
+      const queue = [];
+      for (const f of queueFiles(top, at)) { const t = read(f); if (t !== null) queue.push(parseBrief(t)); }
+      const CMD = "node .agents/skills/agent-desk/scripts/desk.mjs";
+      const n = named.review ?? named.reviewed;
+      if (n !== undefined) {
+        if (!/^[1-9]\d{0,2}$/.test(n)) { console.error(`Usage: ${CMD} waves --review <n> | waves --reviewed <n>   (the wave's number)`); return 2; }
+        const key = `desk.wavereview.${n}.started`; // git's key names can't start with a digit, so the wave's number is the middle part
+        let started = gitConf(top, key);
+        if (named.reviewed !== undefined) {
+          if (!started) { console.error(`No review of wave ${n} is open in this checkout (${CMD} waves --review ${n} starts one).`); return 1; }
+          const mins = Math.max(0, Math.floor((Date.now() - Date.parse(started)) / 60000));
+          spawnSync("git", ["config", "--unset-all", key], { cwd: top });
+          console.log(`Wave ${n}'s review is closed after ${mins} minute${mins === 1 ? "" : "s"}${mins > WAVE_REVIEW_MINUTES ? ` (over its ${WAVE_REVIEW_MINUTES}: tell the owner in one line what wasn't checked)` : ""}. Next: ${CMD} up --wave ${Number(n) + 1}.`);
+          return 0;
+        }
+        if (!started) { started = new Date().toISOString(); spawnSync("git", ["config", key, started], { cwd: top }); }
+        console.log(reviewWords(cfg, queue, Number(n), started, Date.now(), CMD));
+        return 0;
+      }
+      console.log(waveWords(cfg, queue, CMD));
       return 0;
     }
     case "resolve-lists": {

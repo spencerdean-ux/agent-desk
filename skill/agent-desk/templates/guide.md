@@ -272,6 +272,44 @@ What it needs, and what to expect:
 
 That keeps it awake until two hours have passed with nothing moving; `/agent-desk lead awake leader off` makes it wait for your `/agent-desk lead check` instead. Asleep, it tells you so in one line, and `/agent-desk lead watch` (or any desk command) wakes it. `/agent-desk status` says whether the leader is awake and its window.
 
+## What setup asks, and your own defaults
+
+`/agent-desk setup` asks its questions in three short rounds, each with its default shown. Answer what you care about and say **"use the defaults for the rest"** at any point.
+
+| Round | It asks | Default |
+|---|---|---|
+| 1. The project and the team | the project's name and a one-line title; how many agents; how many are Claude, ChatGPT (Codex) and Gemini (Antigravity); which models each may use | 2 agents; any model |
+| 2. The work | briefs kept ready for each agent; spare briefs for anyone; whether to pre-write every wave and brief; where the spec is; each agent's job; who reviews whom | 1 ready; 0 spare; no; `docs/`; a ring |
+| 3. How it runs | automatic checking; minutes of silence before you are warned; how long the leader watches; compaction; subagents; who starts each agent; the work branch | off; 20; 60; 500,000 tokens; the first agent; you; this branch |
+
+It then shows you the whole desk and writes nothing until you say yes.
+
+**Your own defaults.** When an answer differs from the default, the leader asks once whether it should become the default for future projects in this repository. Say yes and it is kept in `agents/desk/defaults.json`, which the next setup starts from. For example, to have every new project compact at 300,000 tokens, or to have the skill leave compaction alone:
+
+**Where: the leader**
+
+```
+/agent-desk lead defaults autocompact 300000
+```
+
+```
+/agent-desk lead defaults autocompact off
+```
+
+`/agent-desk lead defaults` shows them all and says which are yours. They are kept per repository, because the cloud tools start on a fresh machine each time and would never see a file on your computer. A project already set up doesn't change when a default does.
+
+**Models an agent may use.** If you list models for an agent, it checks before it works. On another model it does nothing, says which model it is on and which are allowed, and stops. You then either switch the model in that tool and type `go`, or, in that same conversation, type:
+
+```
+allow this model
+```
+
+✅ The agent adds that model to its own list and carries on.
+
+**Briefs kept ready, and spares.** "Ready" is how many briefs the leader keeps written behind the one each agent is working on, so an agent never waits for the leader. "Spare" briefs belong to nobody: whichever agent runs out first is given the next one.
+
+**Pre-writing the waves.** If you say yes, the leader writes every brief for the whole spec before anyone starts, grouped into waves (a wave is one round the agents work side by side), and shows you the plan. No agent starts until you say yes to it. After each wave it spends at most 10 minutes checking the remaining briefs against what was actually built, changes only those that need a major change, and tells you in one line if it ran out of time.
+
 ## Good night
 
 To stop everything until you are back, without losing anything:
