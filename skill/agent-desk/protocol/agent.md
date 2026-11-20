@@ -46,7 +46,8 @@ git show origin/<base>:AGENTS.md
 
 The `remote.origin.fetch` line is there because a cloud tool's copy may fetch only one branch, so `origin/<branch>` wouldn't resolve.
 
-- **The project:** desk.json's `project` must be <project>. If it names another, stop: the work branch in your prompt belongs to another project.
+- **The project:** desk.json's `project` must be <project>. If it names another, stop: the work branch in your prompt belongs to another project. If there is no desk.json there and `agents/desk/archive/<project>/desk.json` exists, the project has ended: run `node .agents/skills/agent-desk/scripts/cleanup.mjs --local`, tell the owner, and stop.
+- **Asleep:** if desk.json has `asleep`, the owner said good night and the desk is asleep. Do no step. Run `node .agents/skills/agent-desk/scripts/desk.mjs report asleep`, cancel any timer you set, and stop with: "the desk is asleep: type `go` at the leader first, then here." This holds for a `go` too: the desk wakes at the leader first.
 - Find your entry in desk.json's `agents`: your `tool`, `model`, `job`, `reviewer` and `port`, and the `leader`. If you aren't there, stop: you aren't on this desk.
 - **Your model:** if your entry names one and you can tell you are running a different one, tell the owner first, then carry on. (Most tools let only the owner choose the model.)
 - **Your context:** your conversation compacts at desk.json's `autocompact` (500,000 tokens unless set; your own entry's figure wins). Each tool reads it from a file the installer writes: Claude Code the repository's `.claude/settings.json` (`autoCompactWindow`), Codex `.codex/config.toml` (`model_auto_compact_token_limit`), the Antigravity app `.gemini/settings.json` (a fraction of the window). Antigravity Remote Agents take it from the owner's Antigravity settings and are reported to compact near 256K whatever is set: if you can tell your tool won't honour the figure, say so once and carry on.
@@ -95,11 +96,19 @@ git show origin/<base>:.agents/skills/agent-desk/scripts/wait.mjs > .git/desk-wa
 
 (`--fresh` writes the report even when it already says `waiting`, so each start, a new conversation or the owner's `go`, moves its time and the leader never reads an agent that is here as silent. Run that line once per start, not once per wait: the wait itself refreshes the report while you wait, once it is half of desk.json's `silence_minutes` old, and running the wait again and again otherwise costs the work branch nothing.)
 
-It reads your name from this copy, watches the work branch on origin (a look every 3 minutes, for 25 minutes at most; on Antigravity each run lasts about a minute instead, two looks, because Antigravity ends a silent background command after about three minutes and restarts your machine, so a `wait:` line there simply means run it again), prints a heartbeat line while it sleeps, and ends with one line:
+It reads your name from this copy, watches the work branch on origin (a look every 3 minutes, for 25 minutes at most), prints a heartbeat line while it sleeps, and ends with one line:
 
 - `fits: …` (a pull request for you to review, a decision to answer, or a brief for you): start again from step 1 as if the owner had typed `go`, do every step that fits, then run the wait again.
-- `wait: …`: nothing new yet. Run it again at once, as many times as it takes, and say nothing in between.
-- `stop: …`: the leader turned the switch off, you are no longer on this desk, or this copy's name doesn't match. Stop and tell the owner the line.
+- `wait: …`: nothing new yet. Run it again at once, as many times as it takes, and say nothing in between. **Not on Antigravity:** see below.
+- `stop: …`: the leader turned the switch off, you are no longer on this desk, this copy's name doesn't match, the owner said good night, or the project has ended. Stop and tell the owner the line. A `stop: good night` is reported as `report asleep` (not `stopped`), and nothing wakes you but the owner's `go`, typed at the leader first. A `stop: … has ended` line names the clean-up to run: `node .agents/skills/agent-desk/scripts/cleanup.mjs --local`.
+
+**On Antigravity you never sleep in a command.** Antigravity moves any command that runs past ten seconds into a background stream, and an agent that waits on one which never reports back hangs for good: it looks busy for ever, and only a new conversation mends it. So there the wait is one look that returns in a few seconds, whatever you pass it, and its `wait:` line ends with what to do next. Do exactly this:
+
+1. Set a **one-shot timer** with your built-in `schedule` tool: 180 seconds, with the prompt `desk look for <name> on <project>: run the wait once, as agent.md step 5 says`. One-shot, never a recurring one: a timer you set again at each look stops by itself when you stop.
+2. **End your turn**, saying nothing but "waiting". This is the one case where an awake agent ends its turn without a `stop:` line.
+3. When the timer wakes you, run the wait line again (the second line of the block above, not the report), act on a `fits:`, and on a `wait:` set the timer again and end your turn.
+
+If your tool has **no timer** to set (no `schedule` tool, or it refuses), you can't stay awake safely: run `node .agents/skills/agent-desk/scripts/desk.mjs report stopped --words "no timer in this tool"`, tell the owner once "this tool gave me no timer, so `go` wakes me", and end your turn. Never fall back to `sleep`, a loop in the shell, or a long-running wait: that is the hang.
 
 Only these end your turn while awake: a `stop:` line; the owner typing `stop` (say "Stopped. `go` wakes me again."); or a step that can't be done as written. In each case run `node .agents/skills/agent-desk/scripts/desk.mjs report stopped` first, so the desk shows you as gone rather than silent (the stops in steps 1 to 3 and the step files, which say what you saw). A step that found nothing to do because it is the leader's turn (no decision yet, your pull request pushed and waiting) isn't such a stop: say it in a line and run the wait. So never end your turn because nothing fitted, and never do one fit twice: the wait says each once, and says it again only when the leader moves your row or the other agent pushes again. Read the step files fresh each time, as always; the wait's copy is fresh too, taken from the work branch at each run.
 

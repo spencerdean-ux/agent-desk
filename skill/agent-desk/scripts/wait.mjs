@@ -17,14 +17,18 @@
 // waits for the leader is nothing to do.
 // With nothing to do it looks again every --every minutes (3) for --for minutes (25), then says so:
 //   wait: nothing new for <name> on <project> …   (run it again)
-// On Antigravity (the copy's git config desk.tool, or ANTIGRAVITY_AGENT=1) a run is every 1 for 1: about
-// a minute, two looks, because Antigravity detaches a command past 10 s into a background stream and
-// recreates the agent's machine once that stream has been silent for about three minutes; the agent runs it again on each wait:. While it sleeps it prints a heartbeat line
-// every --beat seconds (20), so no run is ever silent; --once never sleeps and prints none.
+// While it sleeps it prints a heartbeat line every --beat seconds (20), so no run is ever silent;
+// --once never sleeps and prints none.
+// On Antigravity (the copy's git config desk.tool, or ANTIGRAVITY_AGENT=1) it never sleeps at all:
+// every run is one look, whatever --every and --for say. Antigravity moves a command past 10 s into
+// a background stream, and an agent waiting on one that never reports back hangs for good (an awake
+// agent did, after about an hour of sleeping waits). So there the wait: line ends with what to do
+// instead: set a 180-second timer with the tool's own schedule, and end the turn.
 // It stops, and the agent with it, when the desk says so:
 //   stop: …   awake is off for this agent (desk.json's awake), it isn't on the desk, it has moved to
 //             another tool (desk.json's tool against the copy's git config desk.tool), the copy's project
-//             isn't the work branch's, or the copy has no name
+//             isn't the work branch's, the copy has no name, the owner said good night (desk.json's
+//             asleep), or the project has ended (its desk is in agents/desk/archive/)
 // Exit 0: a fit. 3: nothing yet. 1: stop. 2: it couldn't run.
 // It imports nothing of the desk's, so an agent runs the work branch's copy alone:
 //   git show origin/<base>:.agents/skills/agent-desk/scripts/wait.mjs > .git/desk-wait.mjs && node .git/desk-wait.mjs
@@ -34,9 +38,14 @@
 //   fits: check <branch>[, <branch>]   a branch moved or appeared since the last look (an agent pushed),
 //                                      or an agent's report in agents/desk/status says pushed
 //   fits: help <agent> (blocked …)     an agent's report says blocked, once per report
-// and, where desk.json's notify names the owner's issue, a line before its last for each event the
-// owner is told of (notify: node .agents/skills/agent-desk/scripts/desk.mjs notify <event> … --post): blocked with the help,
-// silent the first time, asleep with the stop; the leader runs that line.
+// and, where desk.json's notify names the owner's issue, it tells the owner itself of each event it
+// sees (blocked with the help, silent the first time, asleep with the stop), through its sibling
+// desk.mjs notify … --post, and says so in a line before its last:
+//   told: Posted on #N: …          the comment is on the issue
+//   notify: post this comment …    gh isn't here: the leader posts it with its own GitHub tool
+//   notify: node … notify … --post   the post was refused: it is tried again at the next look
+// With desk.json's asleep set (the owner's good night) it waits for the agents that are there to
+// report asleep, for silence_minutes at most, then says stop: good night … and tells nobody.
 // once per head, never a head already merged into the work branch, and never on a checkout's first look,
 // which only records what is there; a branch that went, or the work branch moving, is activity but no fit. Activity resets
 // the leader's clock (git config desk.leader.active), and so does --touch (an event or the owner's
@@ -55,7 +64,16 @@ let CONFIG = "", BOARD = "", ASSIGNMENTS = "", STATUS = "";
 function useProject(project) { const d = `${ROOT}/${project}`; CONFIG = `${d}/desk.json`; BOARD = `${d}/board.md`; ASSIGNMENTS = `${d}/assignments`; STATUS = `${d}/status`; }
 // The projects with a desk on origin's work branch.
 const projectsOn = (base) => (git(["ls-tree", "-r", "--name-only", `origin/${base}:${ROOT}`], { soft: true }) || "").split("\n").map((l) => /^([^/]+)\/desk\.json$/.exec(l)).filter(Boolean).map((m) => m[1]).sort();
-const GONE = new Set(["stopped", "moved"]);
+// A report in one of these needs no one's attention: the agent has left, or sleeps at the owner's word.
+const GONE = new Set(["stopped", "moved", "asleep"]);
+const DESK = ".agents/skills/agent-desk/scripts/desk.mjs";
+// What an agent does after a wait: on Antigravity, in place of a sleeping command.
+const TIMER = "; look again in 3 minutes: set a 180-second timer (the tool's own schedule, one-shot, its prompt \"desk look\"), then end your turn; with no timer to set, report stopped and say that go wakes you (agent.md step 5; the leader: lead.md, Watching the desk)";
+// The desk's own script: this file's sibling, else the checkout's installed copy.
+const siblingDesk = () => {
+  const top = git(["rev-parse", "--show-toplevel"], { soft: true }) || ".";
+  return [fileURLToPath(new URL("./desk.mjs", import.meta.url)), join(top, DESK)].find((p) => existsSync(p)) || "";
+};
 
 // Every agent's report on origin's work branch: { name: status }.
 function statuses(base) {
@@ -77,8 +95,7 @@ function refreshWaiting(cfg, myReport) {
   if (!myReport || myReport.phase !== "waiting") return "";
   const mins = (Date.now() - Date.parse(myReport.at)) / 60000;
   if (!Number.isFinite(mins) || mins < quietAfter / 2) return "";
-  const top = git(["rev-parse", "--show-toplevel"], { soft: true }) || ".";
-  const desk = [fileURLToPath(new URL("./desk.mjs", import.meta.url)), join(top, ".agents/skills/agent-desk/scripts/desk.mjs")].find((p) => existsSync(p));
+  const desk = siblingDesk();
   if (!desk) return "your waiting report is getting old and .agents/skills/agent-desk/scripts/desk.mjs isn't in this copy to refresh it: run node .agents/skills/agent-desk/scripts/desk.mjs report waiting --fresh yourself";
   const r = spawnSync(process.execPath, [desk, "report", "waiting", "--fresh"], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
   if (r.status === 0) return "your waiting report refreshed (a heartbeat, so the leader doesn't read you as silent)";
@@ -88,7 +105,7 @@ const reportWords = (st) => `${[st.phase, st.brief, st.pr].filter(Boolean).join(
 
 function args(argv) {
   const antigravity = process.env.ANTIGRAVITY_AGENT === "1" || (git(["config", "desk.tool"], { soft: true }) || "") === "antigravity";
-  const o = { once: false, every: antigravity ? 1 : 3, for: antigravity ? 1 : 25, beat: 20, mark: true, leader: false, touch: false, antigravity };
+  const o = { once: false, every: 3, for: 25, beat: 20, mark: true, leader: false, touch: false, antigravity };
   for (let i = 0; i < argv.length; i++) {
     const v = argv[i];
     if (v === "--once") o.once = true;
@@ -103,11 +120,12 @@ function args(argv) {
   }
   if (!(o.every > 0) || !(o.for > 0)) throw new Error("--every and --for take minutes above zero");
   if (!(o.beat >= 0)) throw new Error("--beat takes seconds (0 for none)");
+  if (antigravity) o.once = true; // never a sleeping command there, whatever was asked
   return o;
 }
 
 // The run's schedule, said once at the start so the agent knows how long it holds the turn.
-const schedule = (o) => `looking every ${o.every} min for ${o.for} min${o.antigravity ? " (Antigravity ends a silent background command after about three minutes and restarts your machine, so each run is short: run me again on wait:)" : ""}`;
+const schedule = (o) => `looking every ${o.every} min for ${o.for} min`;
 
 // A sleep that is never silent: a heartbeat line every beat seconds, so a tool watching the stream sees life.
 async function sleepBeating(ms, beat) {
@@ -155,6 +173,7 @@ const acted = (brief) => git(["config", `desk.${brief}.acted`], { soft: true }) 
 // One look at origin: { fit, line } for something to do, { stop, line }, or { line } for nothing yet.
 function look(me, mark) {
   const text = show(me.base, CONFIG);
+  if (text === null && show(me.base, `${ROOT}/archive/${me.project}/desk.json`) !== null) return { stop: true, line: `stop: ${me.project} has ended (its desk is in ${ROOT}/archive/${me.project}/ on origin/${me.base}): run node .agents/skills/agent-desk/scripts/cleanup.mjs --local to clear this copy's desk branches and settings, cancel any timer you set, and end your turn` };
   if (text === null) return { stop: true, line: `stop: there is no ${CONFIG} on origin/${me.base}: the desk isn't set up there` };
   let cfg;
   try { cfg = JSON.parse(text); } catch (err) { return { stop: true, line: `stop: ${CONFIG} on origin/${me.base} isn't JSON (${err.message})` }; }
@@ -164,6 +183,7 @@ function look(me, mark) {
   if (!a) return { stop: true, line: `stop: ${me.slot} isn't on the ${me.project} desk any more (desk.json's agents: ${agents.map((x) => x && x.name).join(", ")})` };
   const tool = git(["config", "desk.tool"], { soft: true });
   if (tool && a.tool && tool !== a.tool) return { stop: true, line: `stop: ${me.slot} has moved to ${a.tool} (desk.json), and this conversation is ${tool}'s, so it is finished: the owner pastes ${me.slot}'s new prompt in ${a.tool} (desk.mjs prompts ${me.slot})` };
+  if (cfg.asleep) return { stop: true, line: `stop: good night: the ${me.project} desk is asleep (since ${String(cfg.asleep).slice(11, 16)} UTC, desk.json's asleep): run node ${DESK} report asleep, cancel any timer you set, and end your turn; the owner types go at the leader first, then here, to wake you` };
   if (!isAwake(cfg, a)) return { stop: true, line: `stop: awake is off for ${me.slot} on ${me.project} (desk.json's awake): the owner's go moves ${me.slot} now, and the leader's desk.mjs awake on turns this back on` };
   const board = rows(show(me.base, BOARD));
   const boardCommit = git(["log", "-1", "--format=%H", `origin/${me.base}`, "--", BOARD], { soft: true }) || "";
@@ -228,8 +248,34 @@ function lookAsLeader(base, touch) {
   // The owner's issue and the events it carries (desk.json's notify), for the ready-made notify lines.
   const nt = cfg.notify && typeof cfg.notify === "object" && Number.isInteger(cfg.notify.issue) && cfg.notify.issue >= 1
     ? { events: Array.isArray(cfg.notify.events) ? cfg.notify.events : ["blocked", "silent", "asleep", "merged", "question"] } : null;
-  const tell = (event, args) => nt && nt.events.includes(event) ? [`notify: node .agents/skills/agent-desk/scripts/desk.mjs notify ${event}${args ? ` ${args}` : ""} --post`] : [];
+  // Telling the owner is done here, by the desk's own script, so it never rests on the leader
+  // remembering a line: { lines, told }. told is false only when the post was refused, and then the
+  // ready-made line is printed and the next look tries again.
+  const tell = (event, args) => {
+    if (!nt || !nt.events.includes(event)) return { lines: [], told: true };
+    const line = `notify: node ${DESK} notify ${event}${args ? ` ${args}` : ""} --post`;
+    const desk = siblingDesk();
+    if (!desk) return { lines: [line], told: true };
+    const r = spawnSync(process.execPath, [desk, "--ref", `origin/${base}`, "notify", event, ...(args ? args.split(" ") : []), "--post", "--project", cfg.project], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+    const out = `${r.stdout || ""}`.trim();
+    if (r.status === 0 && /^Posted on /.test(out)) return { lines: [`told: ${out.split("\n")[0]}`], told: true };
+    if (r.status === 0 && /^already told/.test(out)) return { lines: [], told: true };
+    if (r.status === 0 && out.includes("gh isn't here")) return { lines: [`notify: post this comment on issue #${cfg.notify.issue} with your GitHub tool (gh isn't here): ${out.split("\n\ngh isn't here")[0].replace(/\s*\n+\s*/g, " ")}`], told: true };
+    return { lines: [`${line}   (it couldn't be posted: ${`${r.stderr || out}`.trim().split("\n").pop() || "refused"}; the next look tries again)`], told: false };
+  };
   const pre = [];
+  // Good night: no fits and no warnings, only the agents that are still there going to sleep.
+  if (cfg.asleep) {
+    const all = Array.isArray(cfg.agents) ? cfg.agents : [];
+    const reports = statuses(base);
+    const quietAfter = Number.isInteger(cfg.silence_minutes) ? cfg.silence_minutes : 20;
+    const there = all.filter((a) => a && (typeof a.awake === "boolean" ? a.awake : cfg.awake === true) && reports[a.name]?.phase && !GONE.has(reports[a.name].phase)).map((a) => a.name);
+    const since = minutesSince(cfg.asleep, now);
+    const then = `report it (node ${DESK} report asleep --leader) and end your turn; the owner's go here wakes the desk (node ${DESK} wake), then go in each agent's conversation`;
+    if (!there.length) return { stop: true, line: `stop: good night: every agent is asleep on ${cfg.project}, and so is the desk: ${then}` };
+    if (since > quietAfter) return { stop: true, line: `stop: good night: ${there.join(", ")} didn't answer in ${quietAfter} minutes (last: ${there.map((n) => `${n} ${reports[n].phase} ${String(reports[n].at).slice(11, 16)} UTC`).join(", ")}), and the desk sleeps anyway: ${then}` };
+    return { line: `wait: good night: waiting for ${there.join(", ")} to report asleep (${Math.max(0, since)} of ${quietAfter} minutes)` };
+  }
   const seenText = git(["config", "desk.leader.refs"], { soft: true });
   const firstLook = seenText === null;
   const seen = JSON.parse(seenText || "{}");
@@ -285,7 +331,7 @@ function lookAsLeader(base, touch) {
     if (!st || !st.phase) continue;
     if (st.phase === "blocked" && seenStatus[a.name] !== st.at) {
       seenStatus[a.name] = st.at; git(["config", "desk.leader.seen-status", JSON.stringify(seenStatus)]);
-      return { fit: true, pre: [...pre, ...tell("blocked", `--agent ${a.name}`)], line: `fits: help ${a.name} (blocked on ${st.brief || "its brief"}: ${st.words || "no words"})` };
+      return { fit: true, pre: [...pre, ...tell("blocked", `--agent ${a.name}`).lines], line: `fits: help ${a.name} (blocked on ${st.brief || "its brief"}: ${st.words || "no words"})` };
     }
     if (st.phase === "pushed" && seenStatus[a.name] !== st.at) {
       seenStatus[a.name] = st.at; git(["config", "desk.leader.seen-status", JSON.stringify(seenStatus)]);
@@ -299,11 +345,18 @@ function lookAsLeader(base, touch) {
     if (awake && !GONE.has(st.phase) && Number.isFinite(mins) && mins > quietAfter) {
       const toldKey = `desk.leader.told-silent.${a.name}`;
       const told = git(["config", toldKey], { soft: true }) === st.at;
-      if (!told) { git(["config", toldKey, st.at]); pre.push(...tell("silent", `--agent ${a.name}`)); }
-      silent.push(`${a.name} silent ${mins} min (last: ${st.phase}, ${String(st.at).slice(11, 16)} UTC)${told ? "" : ": tell the owner once, in one line"}`);
+      let how = "";
+      if (!told) {
+        const t = tell("silent", `--agent ${a.name}`);
+        pre.push(...t.lines);
+        if (t.told) git(["config", toldKey, st.at]);
+        // With the issue set the look has told the owner (or says above how); without one, the leader does.
+        how = !nt || !nt.events.includes("silent") ? ": tell the owner once, in one line" : t.lines.some((l) => l.startsWith("told:")) ? `: the owner is told on issue #${cfg.notify.issue}` : t.lines.length ? ": see the notify line above" : "";
+      }
+      silent.push(`${a.name} silent ${mins} min (last: ${st.phase}, ${String(st.at).slice(11, 16)} UTC)${how}`);
     }
   }
-  if (now - active > idle * 60000) return { stop: true, pre: [...pre, ...tell("asleep")], line: `stop: asleep: nothing has moved on the ${cfg.project} desk for ${idle} minutes (leader.idle_minutes); the owner's /agent-desk lead watch, or any desk command, wakes the leader ${name} again (wait.mjs --leader --touch)` };
+  if (now - active > idle * 60000) return { stop: true, pre: [...pre, ...tell("asleep").lines], line: `stop: asleep: nothing has moved on the ${cfg.project} desk for ${idle} minutes (leader.idle_minutes); the owner's /agent-desk lead watch, or any desk command, wakes the leader ${name} again (wait.mjs --leader --touch)` };
   const notes = [firstLook ? `first look: ${Object.keys(heads).length} desk branch${Object.keys(heads).length === 1 ? "" : "es"} recorded` : "", gone.length ? `${gone.join(", ")} went (merged or closed)` : "", baseMoved ? "the work branch moved" : "", ...silent].filter(Boolean);
   return { pre, line: `wait: nothing new for the leader ${name} on ${cfg.project}${notes.length ? ` (${notes.join("; ")})` : ""}; asleep after ${idle} minutes without activity` };
 }
@@ -331,7 +384,7 @@ async function main(argv) {
         for (const l of r.pre || []) console.log(l);
         if (r.fit) { console.log(r.line); return 0; }
         if (r.stop) { console.log(r.line); return 1; }
-        if (o.once) { console.log(r.line); return 3; }
+        if (o.once) { console.log(`${r.line}${o.antigravity ? TIMER : ""}`); return 3; }
         if (Date.now() - started + o.every * 60000 > o.for * 60000) { console.log(`${r.line}; nothing new in ${Math.round((Date.now() - started) / 60000)} minutes, so run me again`); return 3; }
       }
       await sleepBeating(o.every * 60000, o.beat);
@@ -354,7 +407,7 @@ async function main(argv) {
       const r = look(me, o.mark);
       if (r.fit) { console.log(r.line); return 0; }
       if (r.stop) { console.log(r.line); return 1; }
-      if (o.once) { console.log(r.line); return 3; }
+      if (o.once) { console.log(`${r.line}${o.antigravity ? TIMER : ""}`); return 3; }
       if (Date.now() - started + o.every * 60000 > o.for * 60000) { console.log(`${r.line}; nothing new in ${Math.round((Date.now() - started) / 60000)} minutes, so run me again`); return 3; }
     }
     await sleepBeating(o.every * 60000, o.beat);

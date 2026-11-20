@@ -7,11 +7,12 @@ import { agentNamed, isAwake, silenceMinutes } from "./config.mjs";
 export { statusDir } from "./paths.mjs";
 // What an agent says it is doing, in the order a brief goes through them; blocked, waiting, stopped
 // and moved sit beside them.
-export const PHASES = ["taking", "working", "checking", "pushed", "reviewing", "reviewed", "revising", "blocked", "waiting", "stopped", "moved"];
+export const PHASES = ["taking", "working", "checking", "pushed", "reviewing", "reviewed", "revising", "blocked", "waiting", "stopped", "moved", "asleep"];
 // What the leader says it is doing.
 export const LEADER_PHASES = ["checking", "deciding", "merging", "awake", "asleep"];
-// A report in one of these needs no one's attention: the agent has left.
-const GONE = new Set(["stopped", "moved"]);
+// A report in one of these needs no one's attention: the agent has left, or sleeps at the owner's
+// good night until the owner's go.
+const GONE = new Set(["stopped", "moved", "asleep"]);
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 
 export function parseStatus(text) {

@@ -39,7 +39,9 @@ export function agentPrompt(cfg, name, { review } = {}) {
     "and follow them exactly. Where they say stop, stop and tell me why.",
     `Keep to this project: if this conversation has already worked on another project, stop and ask me for a new one.`,
     isAwake(cfg, a)
-      ? `This desk keeps you awake: when every step that fits is done, don't stop but stay on the desk, as agent.md step 5 says, running the work branch's node .agents/skills/agent-desk/scripts/wait.mjs again and again (git show origin/${wb}:.agents/skills/agent-desk/scripts/wait.mjs > .git/desk-wait.mjs && node .git/desk-wait.mjs), doing what it says fits, and never end your turn until it prints a stop: line or I type stop. If I type go, do the steps at once.`
+      ? a.tool === "antigravity"
+        ? `This desk keeps you awake: when every step that fits is done, stay on the desk as agent.md step 5 says. Run the work branch's wait once (git show origin/${wb}:.agents/skills/agent-desk/scripts/wait.mjs > .git/desk-wait.mjs && node .git/desk-wait.mjs): it is one short look. Do what it says fits; on a wait: line set a 180-second one-shot timer with your schedule tool (prompt: "desk look for ${a.name} on ${cfg.project}: run the wait once, as agent.md step 5 says") and end your turn, and do the same again each time the timer wakes you. Never wait inside a running command (no sleep, no loop): that hangs this conversation. If you have no timer to set, report stopped, tell me once, and wait for my go. A stop: line, or my typing stop, ends it. If I type go, do the steps at once.`
+        : `This desk keeps you awake: when every step that fits is done, don't stop but stay on the desk, as agent.md step 5 says, running the work branch's node .agents/skills/agent-desk/scripts/wait.mjs again and again (git show origin/${wb}:.agents/skills/agent-desk/scripts/wait.mjs > .git/desk-wait.mjs && node .git/desk-wait.mjs), doing what it says fits, and never end your turn until it prints a stop: line or I type stop. If I type go, do the steps at once.`
       : `Later, whenever I type go in this conversation, do the same again: fetch, read the board, and do every step that fits.`,
     `(Where this tool has loaded the agent-desk skill, the short form does the same: /agent-desk agent ${a.name} ${cfg.project} in Claude Code or Antigravity, $agent-desk agent ${a.name} ${cfg.project} in Codex.)`,
   );
@@ -72,7 +74,7 @@ export function nextStep(cfg, name, row = {}) {
 // otherwise the owner types go in the conversation that holds its prompt, or the leader starts it.
 function start(cfg, a) {
   if (a.started_by === "leader") return `Tell ${cfg.leader.name}: /agent-desk lead ${cfg.project} start ${a.name}`;
-  if (isAwake(cfg, a)) return `Nothing to type: ${a.name} is awake in its ${TOOL_WORDS[a.tool]} conversation (${PLACE[a.tool]}) and picks it up on its own within a few minutes (its prompt, from desk.mjs prompts, pasted once the first time; go if it has stopped)`;
+  if (isAwake(cfg, a)) return `Nothing to type: ${a.name} is awake in its ${TOOL_WORDS[a.tool]} conversation (${PLACE[a.tool]}) and picks it up on its own within a few minutes (its prompt, from desk.mjs prompts, pasted once the first time; go if it has stopped${a.tool === "antigravity" ? ", which it does, and says, where Antigravity gives it no timer" : ""})`;
   return `Type go in ${a.name}'s ${TOOL_WORDS[a.tool]} conversation (${PLACE[a.tool]}; its prompt, from desk.mjs prompts, the first time only)`;
 }
 const cap = (s) => s[0].toUpperCase() + s.slice(1);

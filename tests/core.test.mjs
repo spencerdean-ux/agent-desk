@@ -785,7 +785,7 @@ function ghShim(dir, answer = "{}") {
 // A PATH with git alone, for the words said when gh isn't there.
 function noGhPath(dir) {
   const bin = join(dir, "nogh"); mkdirSync(bin, { recursive: true });
-  for (const tool of ["git", "sh"]) symlinkSync(spawnSync("sh", ["-c", `command -v ${tool}`], { encoding: "utf8" }).stdout.trim(), join(bin, tool));
+  for (const tool of ["git", "sh"]) if (!existsSync(join(bin, tool))) symlinkSync(spawnSync("sh", ["-c", `command -v ${tool}`], { encoding: "utf8" }).stdout.trim(), join(bin, tool));
   return bin;
 }
 const SPEC = `# Garden app spec\n\n## Release A\n\n### A1. Beds and plants\n\nA bed holds plants.\n\n- A plant has a name.\n\n### A2. The watering plan\n\nEach plant is watered on its day. Stop here and ask the owner which days.\n\n## Release B\n\n### B1. Harvests\n\nA harvest is logged.\n\n## Not in this work\n\n### C9. Never\n`;
@@ -813,7 +813,9 @@ test("desk.json's notify names the owner's issue and the events, reads off when 
 const bareDoctor = { boardText: null, briefOf: () => null, briefIds: [], statuses: {}, heads: {}, isMerged: () => false, identity: {}, kitVersion: null, prs: null, compaction: [], now: Date.now() };
 
 test("the doctor reads the desk against origin's branches, the reports and GitHub, and gives every finding a fix", () => {
-  const cfg = desk({ awake: true });
+  // an awake desk with nowhere to tell the owner is a finding of its own (2.1.0), so this desk has its issue
+  const cfg = desk({ awake: true, notify: { issue: 12 } });
+  says(doctorFindings({ cfg: desk({ awake: true }), boardText: renderBoard(desk({ awake: true }), {}), briefOf: () => null }).map((x) => x.what), "nobody is told");
   const briefs = { "A1-x": parseBrief(good({ id: "A1-x", branch: "desk/garden-app/agent-a/A1-x" })), "B1-y": parseBrief(good({ id: "B1-y", slot: "agent-b", reviewer: "agent-a", branch: "desk/garden-app/agent-b/B1-y", port: "8821" })) };
   const briefOf = (id) => briefs[id] || null;
   const board = (rows) => renderBoard(cfg, rows);
@@ -994,6 +996,8 @@ test("desk.mjs doctor finds a row without its branch, a branch without its row, 
   const d = deskWithOrigin();
   const lead = join(d.dir, "lead");
   try {
+    // an awake desk with nowhere to tell the owner is a finding of its own (2.1.0), so this desk has its issue
+    d.rewrite((c) => ({ ...c, notify: { issue: 12 } }));
     let r = deskRun(lead, "doctor");
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.match(r.stdout, /in order/); assert.match(r.stdout, /pull requests not checked/); assert.match(r.stdout, /leader's/);
@@ -2148,7 +2152,7 @@ test("desk.mjs end lists the project's branches, refuses unmerged work unless fo
     assert.equal(r.status, 0, r.stderr + r.stdout);
     assert.deepEqual(heads(), ["claude/work", "desk/other-app/agent-a/Z1-q"], "the work branch and other projects stay");
     d.C("fetch", "-q", "origin");
-    assert.equal(spawnSync("git", ["cat-file", "-e", `origin/claude/work:${CONFIG_PATH}`], { cwd: d.copy }).status, 1, "the project's desk is gone from its place");
+    assert.notEqual(spawnSync("git", ["cat-file", "-e", `origin/claude/work:${CONFIG_PATH}`], { cwd: d.copy }).status, 0, "the project's desk is gone from its place"); // git answers 128 for a path that isn't there
     assert.equal(JSON.parse(d.C("show", "origin/claude/work:agents/desk/archive/garden-app/desk.json")).project, "garden-app");
     const calls = gh.calls().join("\n");
     assert.match(calls, /pulls\/7/); assert.match(calls, /state=closed/); assert.ok(!/pulls\/9/.test(calls));
@@ -2175,6 +2179,8 @@ test("desk.mjs end with everything merged needs no force, and without gh says wh
     const env = { PATH: noGhPath(d.dir) };
     let r = deskRunIn(lead, env, "end");
     assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /pull requests not checked/);
+    // the leader's checkout is behind origin whenever an agent has reported since its last pull: end catches up first
+    assert.equal(deskRun(d.copy, "report", "waiting").status, 0);
     r = deskRunIn(lead, env, "end", "--yes");
     assert.equal(r.status, 0, r.stderr + r.stdout);
     assert.deepEqual(d.L("ls-remote", "--heads", "origin").split("\n").map((l) => l.split("\t")[1]), ["refs/heads/claude/work"]);

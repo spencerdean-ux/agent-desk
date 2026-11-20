@@ -66,10 +66,13 @@ You can say more up front:
 |---|---|
 | `/agent-desk install` | makes the skill available: in a repository, on your computer, or as a zip |
 | `/agent-desk setup` | sets up or changes one project's desk, and gives each agent's starting wording |
-| `/agent-desk lead …` | the leader's work: `check`, `brief …`, `merge`, `plan`, `move`, `reassign`, `shape` |
+| `/agent-desk lead …` | the leader's work: `check`, `brief …`, `merge`, `plan`, `move`, `reassign`, `shape`, `awake on`, `end` |
+| `good night`, then later `go` | typed at the leader: every agent stops, then the desk; `go` at the leader, then at each agent, wakes them |
 | `/agent-desk agent <name> <project>` | starts a conversation's work as one agent |
 | `/agent-desk status` | where a desk stands, and the next thing to do for each agent |
 | `/agent-desk refresh` | puts an agent, or the leader, back on track |
+
+With `awake on`, agents keep checking the desk by themselves, and the desk posts on a GitHub issue when one has been silent for 20 minutes. `/agent-desk lead end` finishes a project: it lists the agents' branches, then deletes them and archives the desk.
 
 The owner's guide is `skill/agent-desk/templates/guide.md`: set-up for each tool, every day's commands, and troubleshooting.
 

@@ -1,7 +1,7 @@
 // The desk's health in one go (desk.mjs doctor): every way the desk disagrees with itself, with
 // origin's branches, with the agents' reports, with GitHub or with this copy, each with the one thing
 // that mends it. Pure: the caller gathers what origin, gh and the copy say and hands it in.
-import { configProblems, agentNamed, isAwake, leaderAwake, autocompactOf, silenceMinutes } from "./config.mjs";
+import { configProblems, agentNamed, isAwake, leaderAwake, autocompactOf, silenceMinutes, notifyOf } from "./config.mjs";
 import { parseBoard, boardProblems } from "./board.mjs";
 import { briefProblems } from "./brief.mjs";
 import { statusProblems, silence } from "./status.mjs";
@@ -72,7 +72,7 @@ export function doctorFindings({ cfg, boardText, briefOf, briefIds = [], statuse
       if (named.has(branch)) continue;
       const m = new RegExp(`^desk/${cfg.project}/([a-z0-9-]+)/(.+)$`).exec(branch);
       if (!m) continue;
-      if (isMerged(sha)) add(`${branch} is on origin, merged into ${cfg.work_branch}, and no row names it`, `git push origin --delete ${branch}`);
+      if (isMerged(sha)) add(`${branch} is on origin, merged into ${cfg.work_branch}, and no row names it`, `git push origin --delete ${branch} (or, when the whole project is finished, ${CMD} end clears every one)`);
       else add(`${branch} is on origin and no row names it`, agentNamed(cfg, m[1]) && briefOf(m[2]) ? `${CMD} set ${m[1]} in-progress --brief ${m[2]}, or git push origin --delete ${branch}` : `git push origin --delete ${branch}, or put ${m[1]} and the brief ${m[2]} on the desk`);
     }
   }
@@ -102,6 +102,8 @@ export function doctorFindings({ cfg, boardText, briefOf, briefIds = [], statuse
     if (!s.exists) add(`${s.file} isn't in this copy: desk.json's subagents ask for that definition, so the tool has no such subagent here`, "node .agents/skills/agent-desk/scripts/install.mjs --target . (or desk.mjs subagents <agent> on), then commit the file");
     else if (!s.ok) add(`${s.file} isn't what desk.json's subagents ask for (its model or words differ)`, "node .agents/skills/agent-desk/scripts/install.mjs --target . (or desk.mjs subagents <agent> on), then commit the file");
   }
+  // Automatic checking with no issue to post on: an agent that hangs is noticed by nobody.
+  if ((cfg.agents || []).some((a) => isAwake(cfg, a)) && !notifyOf(cfg)) add(`automatic checking is on and nobody is told when an agent goes silent for ${silenceMinutes(cfg)} minutes (desk.json has no notify)`, `${CMD} notify --setup --create (it makes the issue), then commit and push desk.json`);
   // A shared JSON list (desk.json's shared_lists) left broken or out of order by a merge.
   for (const l of lists) for (const p of l.problems || []) add(`${l.file} (a shared list) ${p}`, `sort it and keep every entry both sides added (in a conflicted merge, ${CMD} resolve-lists does it), then commit`);
   return F;

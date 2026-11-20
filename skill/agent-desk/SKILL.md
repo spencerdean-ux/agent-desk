@@ -53,7 +53,7 @@ Run them with Node from the repository's root. In a repository the skill is inst
 node .agents/skills/agent-desk/scripts/desk.mjs <command> [--project <name>]
 ```
 
-`desk.mjs` with no command lists them all. The ones asked for most: `setup --project <name>`, `validate`, `status`, `prompts [agent]`, `set <agent> <state>`, `brief <id> --for <agent>`, `sync-board`, `doctor`, `log`, `suite`, `plan`, `push`, `reassign`, `shape`, `move`, `subagents`, `models`, `refresh`, `migrate` (a desk from before each project had its own folder). `check.mjs <brief id>` is desk-check, which holds a branch to its brief. `wait.mjs` is an awake agent's or leader's look at the desk. `install.mjs` copies this skill.
+`desk.mjs` with no command lists them all. The ones asked for most: `setup --project <name>`, `validate`, `status`, `prompts [agent]`, `set <agent> <state>`, `brief <id> --for <agent>`, `sync-board`, `doctor`, `log`, `suite`, `plan`, `push`, `reassign`, `shape`, `move`, `subagents`, `models`, `refresh`, `goodnight` and `wake` (the owner's good night, and their `go` after it), `end` (a finished project: its branches deleted, its desk archived), `migrate` (a desk from before each project had its own folder). `check.mjs <brief id>` is desk-check, which holds a branch to its brief. `wait.mjs` is an awake agent's or leader's look at the desk. `cleanup.mjs --local` clears an agent's own copy once its project has ended. `install.mjs` copies this skill.
 
 ## The spin-up wording
 

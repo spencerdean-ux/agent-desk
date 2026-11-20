@@ -72,6 +72,7 @@ import { parseSpec, progressProblems, nextSteps, nextWords, listWords, stepGoal,
 import { relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { endProject } from "./cleanup.mjs";
 import { DESK_ROOT, SKILL_HOME, SKILL_NAME, REPO_SKILL_HOMES, configPath, boardPath, assignmentsDir, queueDir, statusDir, progressPath } from "./paths.mjs";
 import { writeRepoFiles, skillFile, skillVersion } from "./repo-files.mjs";
 
@@ -110,7 +111,10 @@ const USAGE = [
   "  doctor                                          the whole desk checked against origin, the reports, GitHub and this copy, each finding with its fix",
   "  log [--since 2d|12h|<ISO>] [--agent <name>] [--limit <N>] [--md]   the timeline of the work branch's desk commits, oldest first",
   "  notify <event> [--agent <name>] [--brief <id>] [--pr #N] [--words \"…\"] [--post] [--force]   tell the owner on the project's issue, once (" + NOTIFY_EVENTS.join(", ") + ")",
-  "  notify --setup --issue <N> [--events a,b] | notify --setup off   where the owner is told; notify alone says",
+  "  notify --setup --issue <N> [--events a,b] | notify --setup --create | notify --setup off   where the owner is told (--create makes the issue); notify alone says",
+  "  goodnight                                       the owner's good night: agents stop at their next look, then the desk; nothing moves until wake",
+  "  wake                                            the owner's go at the leader: the desk is awake again, and names each agent's conversation to type go in",
+  "  end [--yes] [--force]                           end the project: lists its branches; --yes archives the desk, deletes them and closes its pull requests and issue",
   "  preflight <brief id> [--pr #N] [--no-run]       desk-check and the pull request report, written under .git/desk/ (an agent's own)",
   "  next [agent] [--list] | --done <ID> | --skip <ID> | --open <ID> [--note \"…\"]   the next spec step for each agent without a brief; the marks in agents/desk/progress.json",
   "  brief <id> --for <agent> --from-spec <ID> [--title \"…\"]   a brief whose title and Goal are the spec step's",
@@ -512,6 +516,8 @@ function main(argv) {
         ? `Subagents: ${subs.map(([a, s]) => `${a.name} up to ${s.max} (${s.scope.join(", ")}) on ${s.scope.map((k) => `${s.models[k]} for ${k}`).join(", ")}`).join("; ")}${subs.length < cfg.agents.length ? `; ${cfg.agents.filter((a) => !subagentsOf(cfg, a)).map((a) => a.name).join(", ")} none` : ""} (node .agents/skills/agent-desk/scripts/desk.mjs subagents <agent> on|off).`
         : "Subagents: none; every pull request waits for its reviewer agent (node .agents/skills/agent-desk/scripts/desk.mjs subagents <agent> on gives one agent up to 2, for review and checks).");
       out.push(notifyLine(cfg));
+      if (!notifyOf(cfg) && cfg.agents.some((a) => isAwake(cfg, a))) out.push("Automatic checking is on and nobody is told when an agent goes silent: node .agents/skills/agent-desk/scripts/desk.mjs notify --setup --create makes the issue.");
+      if (cfg.asleep) out.push("", `The desk is asleep since ${String(cfg.asleep).slice(0, 16).replace("T", " ")} UTC (the owner's good night): nothing moves until the owner types go at the leader (node .agents/skills/agent-desk/scripts/desk.mjs wake), then in each agent's conversation.`);
       const la = leaderAwake(cfg);
       out.push("", la.on ? `The leader ${cfg.leader.name} is awake: it watches the desk by itself and sleeps after ${la.idleMinutes} minutes without activity (node .agents/skills/agent-desk/scripts/desk.mjs awake leader on|off [--idle <minutes>]).` : `The leader ${cfg.leader.name} is not awake: the owner's /agent-desk lead check moves the desk (node .agents/skills/agent-desk/scripts/desk.mjs awake leader on [--idle <minutes>]).`);
       const awake = cfg.agents.filter((a) => isAwake(cfg, a)).map((a) => a.name), asleep = cfg.agents.filter((a) => !isAwake(cfg, a)).map((a) => a.name);
@@ -600,6 +606,12 @@ function main(argv) {
       if (!["on", "off"].includes(mode)) { console.error("Usage: node .agents/skills/agent-desk/scripts/desk.mjs awake on|off [agent]   (off unless turned on; an agent's own switch wins over the desk's)"); return 2; }
       if (who && !agentNamed(cfg, who)) { console.error(`“${who}” isn't an agent on this desk (${cfg.agents.map((a) => a.name).join(", ")})`); return 1; }
       const on = mode === "on";
+      // Automatic checking with nobody told is how a hung agent goes unnoticed for hours: turning it
+      // on needs the issue the silence warning is posted on, unless the owner says otherwise.
+      if (on && !notifyOf(cfg) && named["no-notify"] === undefined) {
+        console.error(`Not set: automatic checking needs somewhere to tell the owner when an agent goes silent for ${silenceMinutes(cfg)} minutes, and this desk has no notifications issue. Make one first: node .agents/skills/agent-desk/scripts/desk.mjs notify --setup --create (or notify --setup --issue <N> for one that exists), then run this again. To go without the warning, in so many words: awake on${who ? ` ${who}` : ""} --no-notify.`);
+        return 1;
+      }
       // The desk's switch is written after work_branch, where a reader looks for it; setting it for the
       // whole desk drops each agent's own, so "awake on" means everyone.
       const next = {};
@@ -614,8 +626,46 @@ function main(argv) {
       if (problems.length) { console.error(`Not set: ${problems.join("; ")}`); return 1; }
       writeFileSync(join(top, CONFIG_PATH), JSON.stringify(next, null, 2) + "\n");
       const awake = next.agents.filter((a) => isAwake(next, a)).map((a) => a.name);
-      console.log(`${who ? `${who} is` : "The desk is"} ${on ? "awake" : "not awake"} on ${cfg.project}: ${awake.length ? `${awake.join(", ")} ${awake.length === 1 ? "stays" : "stay"} on the desk between steps` : "every agent waits for go"}. Next: commit and push desk.json; a running agent reads the switch at its next look or go.`);
+      console.log(`${who ? `${who} is` : "The desk is"} ${on ? "awake" : "not awake"} on ${cfg.project}: ${awake.length ? `${awake.join(", ")} ${awake.length === 1 ? "stays" : "stay"} on the desk between steps` : "every agent waits for go"}. Next: commit and push desk.json; a running agent reads the switch at its next look or go.${on && !notifyOf(next) ? " As you asked, nobody is told when an agent goes silent (notify --setup --create mends that)." : ""}`);
       return 0;
+    }
+    case "goodnight": {
+      // The owner's good night: desk.json says since when, on the work branch, from any copy. The
+      // agents stop at their next look and the leader once they have; awake is left as it was.
+      if (ref) { console.error("goodnight writes on the work branch from this copy: never through --ref"); return 2; }
+      try {
+        console.log(pushToBase(top, cfg.work_branch, (wt, there) => {
+          if (there.asleep) return { skip: `The ${there.project} desk is already asleep (since ${String(there.asleep).slice(11, 16)} UTC): nothing pushed. The owner's go wakes it: node .agents/skills/agent-desk/scripts/desk.mjs wake.` };
+          const next = { ...there, asleep: new Date().toISOString() };
+          writeFileSync(join(wt, CONFIG_PATH), JSON.stringify(next, null, 2) + "\n");
+          const awake = there.agents.filter((a) => isAwake(there, a)).map((a) => a.name);
+          return {
+            message: [`desk(${there.project}): good night (the owner's word)`, "", `Desk-Project: ${there.project}`].join("\n"),
+            say: `Good night: the ${there.project} desk is going to sleep. ${awake.length ? `${awake.join(", ")} ${awake.length === 1 ? "stops" : "stop"} at ${awake.length === 1 ? "its" : "their"} next look, within a few minutes, and report asleep` : "No agent is on automatic checking, so none has to stop"}; then watch once more (wait.mjs --leader) and it tells you to sleep too. Nothing moves until the owner types go here first (desk.mjs wake), then in each agent's conversation.`,
+          };
+        }));
+        return 0;
+      } catch (err) { console.error(`Not asleep: ${err.message}`); return 1; }
+    }
+    case "wake": {
+      if (ref) { console.error("wake writes on the work branch from this copy: never through --ref"); return 2; }
+      try {
+        console.log(pushToBase(top, cfg.work_branch, (wt, there) => {
+          if (!there.asleep) return { skip: `The ${there.project} desk isn't asleep: nothing pushed.` };
+          const next = { ...there }; delete next.asleep;
+          writeFileSync(join(wt, CONFIG_PATH), JSON.stringify(next, null, 2) + "\n");
+          return {
+            message: [`desk(${there.project}): awake again (the owner's go)`, "", `Desk-Project: ${there.project}`].join("\n"),
+            say: [`The ${there.project} desk is awake again. Now type go in each agent's own conversation:`, ...there.agents.map((a) => `- ${a.name}: go, in ${a.tool === "other" ? "its own conversation" : `its ${TOOL_WORDS[a.tool]} conversation`}${isAwake(there, a) ? " (it goes back to automatic checking)" : ""}`), "An agent told go before this would have stopped: the desk was asleep."].join("\n"),
+          };
+        }));
+        spawnSync("git", ["config", "desk.leader.active", new Date().toISOString()], { cwd: top });
+        return 0;
+      } catch (err) { console.error(`Not woken: ${err.message}`); return 1; }
+    }
+    case "end": {
+      if (ref) { console.error("end changes the work branch and origin from the leader's checkout: never through --ref"); return 2; }
+      return endProject({ top, cfg, yes: named.yes !== undefined, force: named.force !== undefined, gh });
     }
     case "move": {
       if (ref) { console.error("move writes desk.json here, or with --push on the work branch from any copy: never through --ref"); return 2; }
@@ -807,6 +857,18 @@ function main(argv) {
         if (ref) { console.error("notify --setup writes desk.json in this checkout: run it on the work branch, without --ref"); return 2; }
         let next;
         if (named.setup === "off" || event === "off") { next = { ...cfg }; delete next.notify; }
+        else if (named.create !== undefined) {
+          const title = `Desk notifications for ${cfg.project}`;
+          const text = `The desk posts here when an agent is blocked or silent, when the desk falls asleep, when a brief merges and when the leader has a question. Subscribe to this issue to be told.`;
+          const byHand = `make an issue titled “${title}” in ${cfg.repository}, then node .agents/skills/agent-desk/scripts/desk.mjs notify --setup --issue <its number>`;
+          const made = gh(top, ["api", `repos/${cfg.repository}/issues`, "-f", `title=${title}`, "-f", `body=${text}`]);
+          if (made.missing) { console.error(`Not set: gh isn't here to make the issue. With your GitHub tool, ${byHand}.`); return 1; }
+          let number = NaN; try { number = JSON.parse(made.stdout).number; } catch { /* said below */ }
+          if (made.status !== 0 || !Number.isInteger(number)) { console.error(`Not set: gh couldn't make the issue (${firstLine(made.stderr) || "no number came back"}). By hand: ${byHand}.`); return 1; }
+          const n = { issue: number };
+          if (named.events !== undefined) n.events = named.events.split(",").map((e) => e.trim()).filter(Boolean);
+          next = { ...cfg, notify: n };
+        }
         else {
           const issue = /^#?\d+$/.test(named.issue || "") ? Number(String(named.issue).replace("#", "")) : NaN;
           const n = { issue };

@@ -56,12 +56,14 @@ export function configProblems(cfg) {
   if (cfg.error) return [cfg.error];
   const out = [];
   if (cfg.desk !== 1) out.push("desk must be 1 (the settings' format)");
+  if (cfg.project === "archive") out.push("project can't be “archive”: that folder holds the desks of finished projects");
   if (!PROJECT.test(cfg.project || "")) out.push(`project “${cfg.project ?? ""}” must be a name of lower-case letters, digits and hyphens, such as garden-app`);
   if (cfg.title != null && !short(cfg.title, 120)) out.push("title must be a short line, or left out");
   if (!REPO.test(cfg.repository || "")) out.push(`repository “${cfg.repository ?? ""}” must be owner/name on GitHub`);
   if (!REF.test(cfg.work_branch || "")) out.push(`work_branch “${cfg.work_branch ?? ""}” isn't a branch name`);
   else if (FORBIDDEN_BASES.includes(cfg.work_branch)) out.push(`work_branch can't be ${FORBIDDEN_BASES.join(", ")}: agents work into a branch of the leader's`);
 
+  if (cfg.asleep != null && (typeof cfg.asleep !== "string" || Number.isNaN(Date.parse(cfg.asleep)))) out.push("asleep must be the time the owner said good night (desk.mjs goodnight writes it, desk.mjs wake removes it), or left out");
   if (cfg.awake != null && typeof cfg.awake !== "boolean") out.push("awake must be true or false (off unless set): whether agents stay on the desk between steps");
   if (cfg.autocompact != null && !tokens(cfg.autocompact)) out.push(`autocompact must be a whole number of tokens from ${AUTOCOMPACT_MIN} to ${AUTOCOMPACT_MAX} (${DEFAULT_AUTOCOMPACT} unless set): where an agent's conversation compacts`);
   if (cfg.silence_minutes != null && !(Number.isInteger(cfg.silence_minutes) && cfg.silence_minutes >= 1 && cfg.silence_minutes <= MAX_SILENCE_MINUTES))

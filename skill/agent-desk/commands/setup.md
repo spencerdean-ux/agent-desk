@@ -21,6 +21,6 @@ You must be the leader, or about to become it. If the words name another tool as
 
    Validate must pass. Commit `desk(<project>): <what changed>` and push to the work branch.
 8. **Give the spin-up wording, always.** Run `node .agents/skills/agent-desk/scripts/desk.mjs prompts --project <project>` and give the owner every agent's prompt, whole, each in its own copyable block, under a **Where:** line saying where it is pasted for that agent's tool, in the cloud and in the app. Never leave this step out, never shorten a prompt, and do it again after any change to an agent. Start any `started_by: "leader"` agent yourself, in your own tool only.
-9. Offer, in one line, to be told on a GitHub issue (`desk.mjs notify --setup --issue <N>`).
+9. Offer, in one line, to be told on a GitHub issue (`desk.mjs notify --setup --create` makes it; `notify --setup --issue <N>` uses one that exists). It is needed before automatic checking can be turned on (`awake on`), because that issue is where a silent agent is reported.
 
 A model can only be recorded, not set: tell the owner to choose it in that agent's tool. If the owner asks for more than 6 agents, or for you to start an agent in a tool that isn't yours, say why not and offer the nearest thing allowed.

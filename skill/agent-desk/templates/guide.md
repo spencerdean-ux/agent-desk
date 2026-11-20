@@ -230,9 +230,11 @@ The desk can tell you, on one GitHub issue per project, when something needs you
 /agent-desk lead notify issue #12
 ```
 
-(Make the issue first, say "Desk notifications for garden-app", or let the leader make it: `/agent-desk lead notify set up an issue`.) ✅ The leader records it in desk.json (`notify.issue`) and pushes; `/agent-desk status` says "Notifications: issue #12 (blocked, silent, asleep, merged, question)". To be told of fewer things: `/agent-desk lead notify issue #12 for blocked and silent`. To stop: `/agent-desk lead notify off`.
+(Or let the leader make the issue for you: `/agent-desk lead notify set up an issue`. It is titled "Desk notifications for garden-app".) ✅ The leader records it in desk.json (`notify.issue`) and pushes; `/agent-desk status` says "Notifications: issue #12 (blocked, silent, asleep, merged, question)". To be told of fewer things: `/agent-desk lead notify issue #12 for blocked and silent`. To stop: `/agent-desk lead notify off`.
 
 The leader posts through `gh` where its tool has it, and otherwise with its own GitHub connection; either way the words are the desk's. Subscribe to the issue in GitHub, or watch it, so the notifications reach you where you want them.
+
+**The silence warning.** When an agent on automatic checking (Staying awake, below) has reported nothing for **20 minutes**, the leader's own look posts one comment on that issue: "**gemini-x has been silent for 23 minutes** … If its conversation has stopped, type `go` there." It is posted once for each silence, by the desk's script, not left for the leader to remember. Two things to know: it needs the issue, so automatic checking can't be turned on until one is set; and it is the leader's look that posts it, so if the leader's own conversation has stopped, nothing is posted. The number of minutes is `silence_minutes` in the project's desk.json.
 
 ## Staying awake
 
@@ -254,7 +256,9 @@ What it needs, and what to expect:
 
 - **Permissions:** the agent must be allowed to run commands without asking. On Antigravity Remote Agents that is the default preset, always-proceed (turbo); leave it there for awake agents (set-up step 3).
 - **What it says:** an awake agent reports `waiting` once when it settles, and `stopped` if it ends its turn, so `/agent-desk status` tells a waiting agent from one that has gone.
-- **How long it lasts:** the agent's tool decides how long one turn may run. Antigravity says a Remote Agent keeps working on a long task after you close the browser; whether a turn ends after some hours isn't stated. If a conversation has stopped and reported, type `go` and it carries on.
+- **You are told if one goes quiet:** the leader asks for the notifications issue before it turns this on (Being told, above), and posts there when an agent has been silent for 20 minutes.
+- **In Antigravity an agent waits on a timer.** Between looks it sets a three-minute timer with Antigravity's own `schedule` tool and ends its turn, so you will see a short turn every few minutes rather than one that never ends. It never waits inside a running command: that is what made an Antigravity agent hang after about an hour. If Antigravity gives the agent no timer, it says so once, reports `stopped`, and waits for your `go`.
+- **How long it lasts:** in Claude Code and Codex the agent's tool decides how long one turn may run. If a conversation has stopped and reported, type `go` and it carries on.
 - **Stopping one:** type `stop` in its conversation, or `/agent-desk lead awake off <agent>` (it stops at its next look and says so). `/agent-desk lead pause <agent>` keeps it awake but gives it nothing.
 - **What you still do:** nothing day to day. The leader puts briefs up, decides and merges; you approve releases beyond the work branch as before, and check in with `/agent-desk status` when you like.
 
@@ -267,6 +271,64 @@ What it needs, and what to expect:
 ```
 
 That keeps it awake until two hours have passed with nothing moving; `/agent-desk lead awake leader off` makes it wait for your `/agent-desk lead check` instead. Asleep, it tells you so in one line, and `/agent-desk lead watch` (or any desk command) wakes it. `/agent-desk status` says whether the leader is awake and its window.
+
+## Good night
+
+To stop everything until you are back, without losing anything:
+
+**Where: the leader**
+
+```
+good night
+```
+
+✅ The leader marks the desk asleep on GitHub. Each agent on automatic checking sees it within about three minutes, reports `asleep` and stops; then the leader reports `asleep` and stops too, and tells you in one line. No silence warning is sent while the desk is asleep.
+
+**To wake it, the leader first, then each agent:**
+
+1. **Where: the leader.** Type:
+
+   ```
+   go
+   ```
+
+   ✅ It says the desk is awake again and lists each agent's conversation.
+2. **Where: each agent's conversation.** Type:
+
+   ```
+   go
+   ```
+
+   ✅ Each carries on, back on automatic checking if it was before.
+
+If you type `go` to an agent first, it answers "the desk is asleep: type `go` at the leader first" and does nothing. That is how it is meant to work.
+
+## Ending a project
+
+When a project is finished, this clears away every branch the agents opened.
+
+1. **Where: the leader.** Type:
+
+   ```
+   /agent-desk lead end
+   ```
+
+   ✅ It lists every agent branch of the project on GitHub, each marked **merged** or **not merged**, with any open pull request. Nothing is changed yet.
+2. Read the list. A branch marked **not merged** holds work that is not in your work branch.
+3. **Where: the leader.** If the list is right, type:
+
+   ```
+   yes, end it
+   ```
+
+   ✅ The leader archives the project's desk (to `agents/desk/archive/<project>/`), closes the open pull requests, deletes the agents' branches and closes the notifications issue. If any branch is not merged it stops and asks you about each by name before deleting it. Your work branch is never deleted.
+4. **Where: each agent's conversation.** Type:
+
+   ```
+   the project has ended: run the clean-up
+   ```
+
+   ✅ The agent removes its own copy's desk branches and its name (`cleanup.mjs --local`). An agent still on automatic checking does this by itself. Then close the conversation.
 
 ## Several projects at once
 
@@ -441,7 +503,8 @@ The rule: the leader plans and writes briefs on a **plan** model; an agent writi
 | `/agent-desk status` says an agent is **silent** | It has reported nothing for 20 minutes while awake: its tool may have ended the turn. Open its conversation; if it has stopped, type `go`. The leader has told you once and won't again until it reports and goes quiet anew. |
 | `/agent-desk status` says an agent is **blocked** | It ran out of approaches and said what it ruled out. The leader answers in the pull request at its next look, or hands the brief on; nothing for you to do unless the leader asks. |
 | Two or three Antigravity agents stop at their first step saying the conversation is another agent's, or an agent's `report` says the push was refused by this copy's pre-push hook | They share one folder, or the folder has the repository's hooks on. One clone per agent, opened as its own project in the app, hooks off: step 3, "Antigravity on a computer". `node .agents/skills/agent-desk/scripts/desk.mjs doctor` in the copy names a `core.hooksPath` that is set, with the fix (`git config --unset core.hooksPath`). |
-| An Antigravity agent's machine keeps restarting, or its wait is killed part way (`uVM is in STOPPED state`, `Host stream ended without a terminal result frame`) | Antigravity ends a silent background command after about three minutes and recreates the machine. Since an Antigravity agent's wait runs about a minute at a time with a heartbeat, and the agent runs it again on each `wait:`; update the desk (`/agent-desk install`, from a newer copy of the skill,) so the work branch carries it, and the agents pick it up at their next run. The agent's name and settings live in `.git/config`, which a restart keeps. |
+| An Antigravity agent on automatic checking hangs: it looks busy for ever, typing does nothing, and only deleting the conversation helps | It was waiting inside a running command that never reported back; older copies of the skill waited that way, and it hung after about an hour. Update the skill (`/agent-desk install`, from a newer copy) and push, so the work branch carries it; then start the agent in a new conversation with its prompt. From 2.1.0 an Antigravity agent waits on a three-minute timer and ends its turn between looks. If it still hangs, `/agent-desk lead awake off <agent>` and tell the skill's maintainers what the conversation last showed. |
+| An Antigravity agent's machine keeps restarting, or its wait is killed part way (`uVM is in STOPPED state`, `Host stream ended without a terminal result frame`) | Antigravity ends a silent background command after about three minutes and recreates the machine. An Antigravity agent's wait is now one short look, with a timer between looks, so no command is left running; update the desk (`/agent-desk install`, from a newer copy of the skill,) so the work branch carries it, and the agents pick it up at their next run. The agent's name and settings live in `.git/config`, which a restart keeps. |
 | An agent seems lost, answers as another agent, or is doing something the board doesn't say | Type `/agent-desk refresh` in its conversation (`$agent-desk refresh` in Codex; the leader's too). It reads its name from its copy and its brief, row and report from the work branch, re-reads the rules, says them back in three lines and carries on from where it was. If the card shows a disagreement (its report and the board differ, another tool named for it, hooks on) it stops and tells you the line. |
 | An awake agent stopped and said `wait:` or reported, and nothing is moving | Its tool ended the turn. Type `go` in its conversation: it reads the board and carries on, awake. |
 | An awake agent should stop | Type `stop` in its conversation, or `/agent-desk lead awake off <agent>` (it stops at its next look, within a few minutes). |

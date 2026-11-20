@@ -11,6 +11,9 @@ Read `protocol/lead.md` (in this skill's folder, or fresh from the work branch: 
 | `merge` | Checking the desk, step 4 |
 | `review #N` | Reviewing with a helper |
 | `watch`, `awake on\|off [agent]`, `awake leader on\|off` | Watching the desk; Keeping agents awake |
+| `good night` | Good night (`desk.mjs goodnight`: the agents stop, then you) |
+| `go`, while desk.json says `asleep` | Good night, "Waking" (`desk.mjs wake`, then give the owner each agent's conversation to type `go` in) |
+| `end` | Ending a project (`desk.mjs end` lists; `--yes` only on the owner's word) |
 | `move <agent>\|all to <tool>` | Moving agents to another tool |
 | `reassign <brief> to <agent>`, `pause <agent>`, `remove <agent>` | Pausing, handing over and removing agents |
 | `shape ring\|pairs\|reviewer <agent>` | Setting up or changing the desk |
