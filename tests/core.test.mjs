@@ -22,6 +22,7 @@ import { preflightBody } from "../skill/agent-desk/scripts/preflight.mjs";
 import { briefSections } from "../skill/agent-desk/scripts/brief.mjs";
 import { parseSpec, progressProblems, nextSteps, STEP_ID } from "../skill/agent-desk/scripts/spec.mjs";
 import { symlinkSync } from "node:fs";
+import * as PROMPTS from "../skill/agent-desk/scripts/prompts.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 // wait.mjs reads ANTIGRAVITY_AGENT=1 as "this is Antigravity". An Antigravity agent's own
@@ -1053,12 +1054,14 @@ test("desk.mjs log lists the work branch's desk events oldest first, filters by 
   } finally { d.done(); }
 });
 
-test("desk.mjs notify posts an event once through gh, hands the body over without it, and wait.mjs --leader prints the notify line", () => {
+test("desk.mjs notify posts an event once through gh, hands the body over without it, and wait.mjs --leader tells the owner itself", () => {
   const d = deskWithOrigin();
   const lead = join(d.dir, "lead");
   const gh = ghShim(d.dir);
   const withGh = { PATH: `${gh.bin}:${process.env.PATH}` };
-  const leadWait = (...a) => spawnSync(process.execPath, [join(root, "skill/agent-desk/scripts/wait.mjs"), "--leader", "--once", ...a], { cwd: lead, encoding: "utf8" });
+  const noGhBin = noGhPath(d.dir);
+  const leadWaitIn = (PATH, ...a) => spawnSync(process.execPath, [join(root, "skill/agent-desk/scripts/wait.mjs"), "--leader", "--once", ...a], { cwd: lead, encoding: "utf8", env: { ...process.env, PATH } });
+  const leadWait = (...a) => leadWaitIn(withGh.PATH, ...a);
   try {
     let r = deskRun(lead, "notify"); assert.equal(r.status, 0); assert.match(r.stdout, /Notifications: off/);
     r = deskRun(lead, "notify", "blocked", "--agent", "agent-a"); assert.equal(r.status, 1); assert.match(r.stderr, /report/);
@@ -1067,12 +1070,11 @@ test("desk.mjs notify posts an event once through gh, hands the body over withou
     assert.match(deskRun(lead, "status").stdout, /Notifications: issue #12 \(blocked, silent, asleep, merged, question\)/);
     r = deskRun(d.copy, "report", "blocked", "--brief", "A1-x", "--words", "two approaches failed"); assert.equal(r.status, 0, r.stderr);
     d.L("pull", "-q", "origin", "claude/work");
+    // the leader's look tells the owner itself: no line left for the leader to remember to run
     r = leadWait();
     assert.equal(r.status, 0, last(r)); assert.match(last(r), /^fits: help agent-a/);
-    const lines = r.stdout.trim().split("\n");
-    assert.ok(lines.length >= 2 && /^notify: node \.agents\/skills\/agent-desk\/scripts\/desk\.mjs notify blocked --agent agent-a --post$/.test(lines[lines.length - 2]), r.stdout);
-    r = deskRunIn(lead, withGh, "notify", "blocked", "--agent", "agent-a", "--post");
-    assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /Posted on #12/);
+    assert.match(r.stdout, /^told: Posted on #12: \*\*agent-a is blocked on A1-x/m, r.stdout);
+    assert.ok(!/^notify:/m.test(r.stdout), r.stdout);
     assert.equal(gh.calls().length, 1); assert.match(gh.calls()[0], /repos\/owner\/repo\/issues\/12\/comments/); assert.match(gh.calls()[0], /agent-a is blocked on A1-x/); assert.match(gh.calls()[0], /two approaches failed/);
     r = deskRunIn(lead, withGh, "notify", "blocked", "--agent", "agent-a", "--post");
     assert.equal(r.status, 0); assert.match(r.stdout, /already told/); assert.equal(gh.calls().length, 1);
@@ -1083,25 +1085,41 @@ test("desk.mjs notify posts an event once through gh, hands the body over withou
     r = deskRunIn(lead, { PATH: noGh }, "notify", "merged", "--brief", "A1-x", "--pr", "#7", "--words", "Next up: B1-y for agent-b.", "--post");
     assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /GitHub tool/); assert.match(r.stdout, /A1-x \(#7\) is merged/); assert.match(r.stdout, /issue #12/);
     r = deskRunIn(lead, { PATH: noGh }, "notify", "merged", "--brief", "A1-x", "--pr", "#7", "--post"); assert.match(r.stdout, /already told/);
-    // a silence: the first look prints the notify line, the last line stays a wait
-    writeFileSync(join(lead, `${STATUS_DIR}/agent-a.json`), JSON.stringify({ desk: 1, project: "garden-app", agent: "agent-a", tool: "antigravity", phase: "working", brief: "A1-x", pr: "", step: "", words: "", at: new Date(Date.now() - 45 * 60000).toISOString() }));
+    // a silence: the look posts it itself, once, and the last line stays a wait
+    const stale = (name, mins) => writeFileSync(join(lead, `${STATUS_DIR}/${name}.json`), JSON.stringify({ desk: 1, project: "garden-app", agent: name, tool: "antigravity", phase: "working", brief: "A1-x", pr: "", step: "", words: "", at: new Date(Date.now() - mins * 60000).toISOString() }));
+    stale("agent-a", 45);
     d.board({});
     r = leadWait();
     assert.equal(r.status, 3, last(r)); assert.match(last(r), /^wait: .*agent-a silent/);
-    assert.match(r.stdout, /^notify: node \.agents\/skills\/agent-desk\/scripts\/desk\.mjs notify silent --agent agent-a --post$/m);
-    r = leadWait(); assert.ok(!/notify:/.test(r.stdout), "a silence is told once");
-    r = deskRunIn(lead, withGh, "notify", "silent", "--agent", "agent-a", "--post"); assert.equal(r.status, 0, r.stderr); assert.match(gh.calls()[2], /silent for 4[0-9] minutes/);
-    // asleep: the stop line comes with its notify line
+    assert.match(r.stdout, /^told: Posted on #12: \*\*agent-a has been silent for 4[0-9] minutes/m, r.stdout);
+    assert.ok(!/^notify:/m.test(r.stdout), r.stdout);
+    assert.equal(gh.calls().length, 3); assert.match(gh.calls()[2], /silent for 4[0-9] minutes/);
+    r = leadWait(); assert.ok(!/^(notify|told):/m.test(r.stdout), "a silence is told once"); assert.equal(gh.calls().length, 3);
+    // with no gh the look hands the comment over to post, once
+    stale("agent-b", 31);
+    d.board({});
+    r = leadWaitIn(noGhBin);
+    assert.match(r.stdout, /^notify: .*issue #12/m, r.stdout); assert.match(r.stdout, /agent-b has been silent for 3[0-9] minutes/);
+    r = leadWaitIn(noGhBin); assert.ok(!/^notify:/m.test(r.stdout), "handed over once");
+    // a post gh refuses is tried again at the next look, and said
+    const refusing = join(d.dir, "refuse"); mkdirSync(refusing); writeFileSync(join(refusing, "gh"), "#!/bin/sh\necho 'HTTP 502' >&2\nexit 1\n", { mode: 0o755 });
+    writeFileSync(join(lead, `${STATUS_DIR}/codex-a.json`), JSON.stringify({ desk: 1, project: "garden-app", agent: "codex-a", tool: "codex", phase: "working", brief: "C1-z", pr: "", step: "", words: "", at: new Date(Date.now() - 22 * 60000).toISOString() }));
+    d.board({});
+    r = leadWaitIn(`${refusing}:${process.env.PATH}`);
+    assert.match(r.stdout, /^notify: node \.agents\/skills\/agent-desk\/scripts\/desk\.mjs notify silent --agent codex-a --post/m, r.stdout);
+    r = leadWait(); assert.match(r.stdout, /^told: Posted on #12: \*\*codex-a has been silent/m, r.stdout);
+    // asleep: the stop line comes after the owner is told
     d.L("config", "desk.leader.active", new Date(Date.now() - 61 * 60000).toISOString());
     r = leadWait();
     assert.equal(r.status, 1, last(r)); assert.match(last(r), /^stop: asleep/);
-    assert.match(r.stdout, /^notify: node \.agents\/skills\/agent-desk\/scripts\/desk\.mjs notify asleep --post$/m);
+    assert.match(r.stdout, /^told: Posted on #12: \*\*The garden-app desk is asleep/m, r.stdout);
     // a disabled event prints the body and says so, and the events are checked
     r = deskRun(lead, "notify", "--setup", "--issue", "12", "--events", "blocked,silent"); assert.equal(r.status, 0, r.stderr);
     assert.match(deskRun(lead, "status").stdout, /Notifications: issue #12 \(blocked, silent\)/);
-    r = deskRunIn(lead, withGh, "notify", "asleep", "--post"); assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /off/); assert.equal(gh.calls().length, 3);
+    const posted = gh.calls().length;
+    r = deskRunIn(lead, withGh, "notify", "asleep", "--post"); assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /off/); assert.equal(gh.calls().length, posted);
     d.L("add", "-A"); d.L("commit", "-qm", "events"); d.L("push", "-q", "origin", "claude/work");
-    r = leadWait(); assert.ok(!/notify: .*asleep/.test(r.stdout), "a disabled event gets no notify line");
+    r = leadWait(); assert.ok(!/(notify|told): .*asleep/.test(r.stdout), "a disabled event is told to nobody"); assert.equal(gh.calls().length, posted);
     assert.equal(deskRun(lead, "notify", "--setup", "--issue", "12", "--events", "dancing").status, 1);
     assert.equal(deskRun(lead, "notify", "--setup", "--issue", "0").status, 1);
     r = deskRun(lead, "notify", "--setup", "off"); assert.equal(r.status, 0, r.stderr); assert.match(deskRun(lead, "notify").stdout, /off/);
@@ -1145,37 +1163,43 @@ test("desk.mjs preflight runs desk-check from the agent's copy, writes the repor
 
 // ---- an Antigravity agent's wait is short and never silent, so its machine isn't recreated
 
-test("wait.mjs runs short on Antigravity and keeps a heartbeat, so a silent background stream never kills the agent's machine", () => {
-  // agent-d: Antigravity detaches a command past 10 s into a background stream and
-  // ends that stream, recreating the machine, after about three minutes of silence; the default wait
-  // slept three minutes in silence, so every awake Antigravity agent was killed mid-wait.
+test("wait.mjs on Antigravity is one look and out, with no sleeping command, and names the timer; other tools keep the heartbeat", () => {
+  // Antigravity moves a command past 10 s into a background stream, and an agent that waits on one
+  // which never reports back hangs for good. So there the wait never sleeps: one look, and the
+  // agent sets a timer and ends its turn.
   const d = deskWithOrigin();
+  const W = join(root, "skill/agent-desk/scripts/wait.mjs");
   try {
     d.C("config", "desk.tool", "antigravity");
-    let r = spawnSync(process.execPath, [join(root, "skill/agent-desk/scripts/wait.mjs"), "--for", "0.001"], { cwd: d.copy, encoding: "utf8" });
+    let r = spawnSync(process.execPath, [W], { cwd: d.copy, encoding: "utf8", timeout: 30000 });
     assert.equal(r.status, 3, last(r));
-    assert.match(r.stdout.split("\n")[0], /^looking every 1 min for 0\.001 min/, r.stdout); // the tool's every; --for given here
-    assert.match(r.stdout.split("\n")[0], /Antigravity/);
-    assert.match(last(r), /^wait: /);
-    d.C("config", "desk.tool", "codex");
-    r = spawnSync(process.execPath, [join(root, "skill/agent-desk/scripts/wait.mjs"), "--for", "0.001"], { cwd: d.copy, encoding: "utf8" });
-    assert.match(r.stdout.split("\n")[0], /^looking every 3 min for 0\.001 min/, r.stdout);
-    assert.ok(!/Antigravity/.test(r.stdout.split("\n")[0]));
-    d.C("config", "desk.tool", "antigravity"); // desk.json says agent-a is in Antigravity, so a codex copy would be told it has moved
-    // --once prints no schedule line, as before
-    r = d.wait();
     assert.equal(r.stdout.trim().split("\n").length, 1, r.stdout);
-    // the heartbeat: a line every --beat seconds while it sleeps
-    r = spawnSync(process.execPath, [join(root, "skill/agent-desk/scripts/wait.mjs"), "--every", "0.01", "--for", "0.02", "--beat", "0.15"], { cwd: d.copy, encoding: "utf8" });
+    assert.match(last(r), /^wait: nothing new for agent-a on garden-app/);
+    assert.match(last(r), /180-second timer/); assert.match(last(r), /end your turn/);
+    assert.ok(!/looking every|still waiting/.test(r.stdout), r.stdout);
+    // --for and --every change nothing there: it still never sleeps
+    r = spawnSync(process.execPath, [W, "--every", "5", "--for", "30"], { cwd: d.copy, encoding: "utf8", timeout: 30000 });
+    assert.equal(r.status, 3, last(r)); assert.ok(!/still waiting/.test(r.stdout));
+    // the leader's own look, in Antigravity, is the same
+    r = spawnSync(process.execPath, [W, "--leader"], { cwd: join(d.dir, "lead"), encoding: "utf8", timeout: 30000, env: { ...process.env, ANTIGRAVITY_AGENT: "1" } });
+    assert.equal(r.status, 3, last(r)); assert.match(last(r), /timer/); assert.ok(!/looking every|still waiting/.test(r.stdout), r.stdout);
+    // another tool keeps its schedule and its heartbeat
+    d.C("config", "desk.slot", "codex-a"); d.C("config", "desk.tool", "codex");
+    r = spawnSync(process.execPath, [W, "--for", "0.001"], { cwd: d.copy, encoding: "utf8" });
+    assert.match(r.stdout.split("\n")[0], /^looking every 3 min for 0\.001 min/, r.stdout);
+    assert.ok(!/timer/.test(last(r)), last(r));
+    r = spawnSync(process.execPath, [W, "--every", "0.01", "--for", "0.02", "--beat", "0.15"], { cwd: d.copy, encoding: "utf8" });
     assert.equal(r.status, 3, last(r));
     assert.ok(r.stdout.split("\n").filter((l) => /^… still waiting/.test(l)).length >= 2, r.stdout);
-    assert.match(last(r), /^wait: /);
     assert.ok(!/^… still waiting/.test(d.wait().stdout), "--once never sleeps, so it never beats");
   } finally { d.done(); }
-  const agent = read("skill/agent-desk/protocol/agent.md");
-  for (const w of ["about a minute", "Antigravity"]) assert.ok(part(agent, "## 5.").includes(w), `agent.md step 5: ${w}`);
-  assert.ok(read("skill/agent-desk/templates/guide.md").includes("keeps restarting"), "the guide's troubleshooting covers the restarting machine");
-  assert.ok(read("skill/agent-desk/scripts/wait.mjs").includes("three minutes"), "wait.mjs says why");
+  const step5 = part(read("skill/agent-desk/protocol/agent.md"), "## 5.");
+  for (const w of ["Antigravity", "one-shot timer", "180", "end your turn", "no timer", "report stopped", "never sleep"]) assert.ok(step5.includes(w), `agent.md step 5: ${w}`);
+  assert.ok(read("skill/agent-desk/templates/guide.md").includes("busy for ever"), "the guide's troubleshooting covers the hanging agent");
+  const cfg = desk({ awake: true });
+  const promptFor = PROMPTS.agentPrompt;
+  assert.match(promptFor(cfg, "agent-a"), /timer/, "an awake Antigravity agent's prompt names the timer");
+  assert.ok(!/timer/.test(promptFor(desk({ awake: true, agents: [agent("agent-a", { reviewer: "agent-b", port: 8811 }), desk().agents[1]] }), "agent-a")), "another tool's doesn't");
 });
 
 // ---- the Antigravity desktop app
@@ -2004,8 +2028,156 @@ test("the doctor finds a shared JSON list that isn't valid or sorted", () => {
 test("wait.mjs takes ANTIGRAVITY_AGENT=1 from the environment as Antigravity, whatever the copy says", () => {
   const d = deskWithOrigin();
   try {
-    d.C("config", "desk.tool", "codex");
-    const r = spawnSync(process.execPath, [join(root, "skill/agent-desk/scripts/wait.mjs"), "--for", "0.001"], { cwd: d.copy, encoding: "utf8", env: { ...process.env, ANTIGRAVITY_AGENT: "1" } });
-    assert.match(r.stdout.split("\n")[0], /^looking every 1 min/);
+    d.C("config", "desk.slot", "codex-a"); d.C("config", "desk.tool", "codex");
+    const r = spawnSync(process.execPath, [join(root, "skill/agent-desk/scripts/wait.mjs")], { cwd: d.copy, encoding: "utf8", timeout: 30000, env: { ...process.env, ANTIGRAVITY_AGENT: "1" } });
+    assert.equal(r.status, 3, last(r));
+    assert.match(last(r), /180-second timer/);
+    assert.ok(!/looking every/.test(r.stdout));
+  } finally { d.done(); }
+});
+
+// ---- 2.1.0: the warning that can't be off, good night, and ending a project
+
+test("automatic checking needs somewhere to tell the owner: awake on refuses without the issue, notify --setup --create makes one, and status says when nobody is told", () => {
+  const d = deskWithOrigin({ awake: false });
+  const lead = join(d.dir, "lead");
+  try {
+    let r = deskRun(lead, "awake", "on");
+    assert.equal(r.status, 1, r.stdout); assert.match(r.stderr, /notify --setup --create/); assert.match(r.stderr, /silent/);
+    assert.equal(JSON.parse(readFileSync(join(lead, CONFIG_PATH), "utf8")).awake, false, "nothing written");
+    assert.equal(deskRun(lead, "awake", "on", "agent-a").status, 1, "one agent's switch too");
+    assert.equal(deskRun(lead, "awake", "off").status, 0, "turning it off needs nothing");
+    assert.equal(deskRun(lead, "awake", "leader", "on").status, 0, "the leader's own watch needs nothing");
+    // the owner may still choose to go without, in so many words
+    r = deskRun(lead, "awake", "on", "--no-notify"); assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /nobody is told/);
+    assert.match(deskRun(lead, "status").stdout, /nobody is told/);
+    assert.match(deskRun(lead, "doctor").stdout, /nobody is told/);
+    // the desk makes the issue itself
+    const gh = ghShim(d.dir, '{"number": 31}');
+    r = deskRunIn(lead, { PATH: `${gh.bin}:${process.env.PATH}` }, "notify", "--setup", "--create");
+    assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /issue #31/);
+    assert.match(gh.calls()[0], /repos\/owner\/repo\/issues/); assert.match(gh.calls()[0], /Desk notifications for garden-app/);
+    assert.equal(JSON.parse(readFileSync(join(lead, CONFIG_PATH), "utf8")).notify.issue, 31);
+    assert.ok(!/nobody is told/.test(deskRun(lead, "status").stdout));
+    assert.equal(deskRun(lead, "awake", "on").status, 0);
+    // without gh it says how to make one by hand
+    deskRun(lead, "notify", "--setup", "off");
+    r = deskRunIn(lead, { PATH: noGhPath(d.dir) }, "notify", "--setup", "--create");
+    assert.equal(r.status, 1); assert.match(r.stderr, /Desk notifications for garden-app/); assert.match(r.stderr, /--setup --issue/);
+  } finally { d.done(); }
+  const leadMd = read("skill/agent-desk/protocol/lead.md");
+  assert.ok(part(leadMd, "## Keeping agents awake").includes("notify --setup --create"));
+  assert.ok(part(leadMd, "## Telling the owner").includes("if the leader has stopped too"), "lead.md says what the warning rests on");
+});
+
+test("good night puts the agents and then the desk to sleep, and only the owner's go, at the leader first, wakes them", () => {
+  const d = deskWithOrigin();
+  const lead = join(d.dir, "lead");
+  const W = join(root, "skill/agent-desk/scripts/wait.mjs");
+  const leadWait = () => spawnSync(process.execPath, [W, "--leader", "--once"], { cwd: lead, encoding: "utf8", env: { ...process.env, PATH: noGhPath(d.dir) } });
+  const onOrigin = () => { d.C("fetch", "-q", "origin"); return JSON.parse(d.C("show", `origin/claude/work:${CONFIG_PATH}`)); };
+  try {
+    assert.ok(PHASES.includes("asleep"), "an agent can report asleep");
+    const at = new Date(Date.now() - 90 * 60000).toISOString();
+    assert.equal(silence(desk({ awake: true }), { desk: 1, project: "garden-app", agent: "agent-a", tool: "antigravity", phase: "asleep", brief: "", pr: "", step: "", words: "", at }), 0, "a sleeping agent isn't silent");
+    says(configProblems(desk({ asleep: 5 })), "asleep");
+    assert.deepEqual(configProblems(desk({ asleep: at })), []);
+    assert.equal(leadWait().status, 3, "baseline");
+    let r = deskRun(d.copy, "report", "waiting"); assert.equal(r.status, 0, r.stderr);
+    r = deskRun(lead, "goodnight");
+    assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /good night/i); assert.match(r.stdout, /Pushed/);
+    assert.ok(!Number.isNaN(Date.parse(onOrigin().asleep)), "desk.json on the work branch says since when");
+    assert.equal(onOrigin().awake, true, "the awake switch is left as it was");
+    assert.match(deskRun(lead, "goodnight").stdout, /already asleep/);
+    // the leader waits for the agents that are there
+    r = leadWait(); assert.equal(r.status, 3, last(r)); assert.match(last(r), /^wait: good night: waiting for agent-a/);
+    // the agent's next look stops it
+    r = d.wait(); assert.equal(r.status, 1, last(r)); assert.match(last(r), /^stop: good night/); assert.match(last(r), /report asleep/); assert.match(last(r), /leader first/);
+    r = deskRun(d.copy, "report", "asleep"); assert.equal(r.status, 0, r.stderr);
+    // then the desk sleeps
+    r = leadWait(); assert.equal(r.status, 1, last(r)); assert.match(last(r), /^stop: good night: every agent is asleep/); assert.match(last(r), /desk\.mjs wake/);
+    assert.match(deskRun(lead, "status", "--ref", "origin/claude/work").stdout, /asleep since/i);
+    // an agent that never answers doesn't keep the desk up past silence_minutes, and is named
+    d.L("pull", "-q", "origin", "claude/work");
+    d.rewrite((c) => ({ ...c, asleep: new Date(Date.now() - 30 * 60000).toISOString() }));
+    writeFileSync(join(lead, `${STATUS_DIR}/agent-b.json`), JSON.stringify({ desk: 1, project: "garden-app", agent: "agent-b", tool: "antigravity", phase: "working", brief: "B1-y", pr: "", step: "", words: "", at: new Date(Date.now() - 50 * 60000).toISOString() }));
+    d.board({});
+    r = leadWait(); assert.equal(r.status, 1, last(r)); assert.match(last(r), /^stop: good night/); assert.match(last(r), /agent-b didn't answer/);
+    assert.ok(!/silent|notify:|told:/.test(r.stdout), "no silence warning for a desk that is asleep");
+    // go at the leader wakes the desk, and names each agent's conversation
+    r = deskRun(lead, "wake");
+    assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /awake again/); assert.match(r.stdout, /go/); for (const n of ["agent-a", "agent-b", "codex-a"]) assert.ok(r.stdout.includes(n), n);
+    assert.equal(onOrigin().asleep, undefined);
+    assert.match(deskRun(lead, "wake").stdout, /isn't asleep/);
+    r = d.wait(); assert.equal(r.status, 3, last(r));
+  } finally { d.done(); }
+  const agentMd = read("skill/agent-desk/protocol/agent.md");
+  assert.ok(part(agentMd, "## 2.").includes("the desk is asleep"), "an agent's go while the desk sleeps stops at step 2");
+  assert.ok(part(agentMd, "## 2.").includes("leader first"));
+  const leadMd = read("skill/agent-desk/protocol/lead.md");
+  assert.ok(leadMd.includes("## Good night"), "lead.md has the section");
+  for (const w of ["desk.mjs goodnight", "desk.mjs wake", "report asleep"]) assert.ok(part(leadMd, "## Good night").includes(w), `lead.md Good night: ${w}`);
+  const cmd = read("skill/agent-desk/commands/lead.md");
+  for (const w of ["good night", "`go`", "`end`"]) assert.ok(cmd.includes(w), `commands/lead.md: ${w}`);
+});
+
+test("desk.mjs end lists the project's branches, refuses unmerged work unless forced, then deletes them, archives the desk and tells each copy how to clear itself", () => {
+  const d = deskWithOrigin();
+  const lead = join(d.dir, "lead");
+  const gh = ghShim(d.dir, '[{"number": 7, "head": {"ref": "desk/garden-app/agent-a/A1-x"}}, {"number": 9, "head": {"ref": "some/other-branch"}}]');
+  const withGh = { PATH: `${gh.bin}:${process.env.PATH}` };
+  const heads = () => d.L("ls-remote", "--heads", "origin").split("\n").map((l) => l.split("\t")[1]).filter(Boolean).map((r) => r.replace("refs/heads/", "")).sort();
+  try {
+    deskRun(lead, "notify", "--setup", "--issue", "12"); d.L("add", "-A"); d.L("commit", "-qm", "notify"); d.L("push", "-q", "origin", "claude/work");
+    d.pushAs("agent-a", "A1-x");                                                         // work that isn't merged
+    d.L("push", "-q", "origin", "claude/work:refs/heads/desk/garden-app/agent-b/B1-y");   // a branch already in the work branch
+    d.L("push", "-q", "origin", "claude/work:refs/heads/desk/other-app/agent-a/Z1-q");    // another project's: never touched
+    // without --yes it only lists
+    let r = deskRunIn(lead, withGh, "end");
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /desk\/garden-app\/agent-a\/A1-x\s+not merged.*#7/); assert.match(r.stdout, /desk\/garden-app\/agent-b\/B1-y\s+merged/);
+    assert.ok(!/other-app|#9/.test(r.stdout), "another project's branch and pull request aren't its business");
+    assert.match(r.stdout, /--yes/); assert.match(r.stdout, /nothing was changed/i);
+    assert.equal(heads().length, 4);
+    // unmerged work or an open pull request stops it
+    r = deskRunIn(lead, withGh, "end", "--yes");
+    assert.equal(r.status, 1, r.stdout); assert.match(r.stderr, /desk\/garden-app\/agent-a\/A1-x/); assert.match(r.stderr, /#7/); assert.match(r.stderr, /--force/);
+    assert.equal(heads().length, 4, "nothing deleted");
+    // forced: pull request closed, branches gone, the desk archived, the issue closed, all pushed
+    r = deskRunIn(lead, withGh, "end", "--yes", "--force");
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.deepEqual(heads(), ["claude/work", "desk/other-app/agent-a/Z1-q"], "the work branch and other projects stay");
+    d.C("fetch", "-q", "origin");
+    assert.equal(spawnSync("git", ["cat-file", "-e", `origin/claude/work:${CONFIG_PATH}`], { cwd: d.copy }).status, 1, "the project's desk is gone from its place");
+    assert.equal(JSON.parse(d.C("show", "origin/claude/work:agents/desk/archive/garden-app/desk.json")).project, "garden-app");
+    const calls = gh.calls().join("\n");
+    assert.match(calls, /pulls\/7/); assert.match(calls, /state=closed/); assert.ok(!/pulls\/9/.test(calls));
+    assert.match(calls, /issues\/12/); assert.match(calls, /has ended/);
+    assert.match(r.stdout, /cleanup\.mjs --local/); for (const n of ["agent-a", "agent-b", "codex-a"]) assert.ok(r.stdout.includes(n), n);
+    // an agent's copy hears of it at its next look, and clears itself
+    r = d.wait(); assert.equal(r.status, 1, last(r)); assert.match(last(r), /^stop: garden-app has ended/); assert.match(last(r), /cleanup\.mjs --local/);
+    d.C("branch", "desk/garden-app/agent-a/A1-x"); d.C("config", "desk.tool", "antigravity"); d.C("config", "desk.A1-x.acted", "take:A1-x");
+    r = spawnSync(process.execPath, [join(root, "skill/agent-desk/scripts/cleanup.mjs"), "--local"], { cwd: d.copy, encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /desk\/garden-app\/agent-a\/A1-x/);
+    assert.equal(d.C("branch", "--list", "desk/garden-app/*"), "");
+    assert.equal(spawnSync("git", ["config", "--get-regexp", "^desk\\."], { cwd: d.copy, encoding: "utf8" }).stdout.trim(), "", "no desk.* setting left");
+    // a second end has nothing to do
+    r = deskRunIn(lead, withGh, "end", "--project", "garden-app"); assert.notEqual(r.status, 0); assert.match(r.stderr, /garden-app/);
+  } finally { d.done(); }
+  assert.ok(read("skill/agent-desk/protocol/lead.md").includes("## Ending a project"));
+});
+
+test("desk.mjs end with everything merged needs no force, and without gh says what it couldn't do", () => {
+  const d = deskWithOrigin();
+  const lead = join(d.dir, "lead");
+  try {
+    d.L("push", "-q", "origin", "claude/work:refs/heads/desk/garden-app/agent-b/B1-y");
+    const env = { PATH: noGhPath(d.dir) };
+    let r = deskRunIn(lead, env, "end");
+    assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /pull requests not checked/);
+    r = deskRunIn(lead, env, "end", "--yes");
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.deepEqual(d.L("ls-remote", "--heads", "origin").split("\n").map((l) => l.split("\t")[1]), ["refs/heads/claude/work"]);
+    assert.ok(existsSync(join(lead, "agents/desk/archive/garden-app/desk.json")));
   } finally { d.done(); }
 });
