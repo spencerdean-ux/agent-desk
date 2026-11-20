@@ -299,3 +299,101 @@ test("a new project's first brief can be written: the brief command makes the pr
     assert.match(r.read("agents/desk/garden-app/assignments/A1-beds.md"), /^branch: desk\/garden-app\/agent-a\/A1-beds$/m);
   } finally { r.done(); }
 });
+
+// ---- 2.2.0: setup asks everything, remembers the owner's defaults
+
+test("setup builds the team the owner asked for: so many of each tool, the models each may use, briefs kept ready and spare, pre-writing, and compaction left alone", () => {
+  const r = bare();
+  try {
+    const out = r.desk("setup", "--project", "garden-app", "--claude", "1", "--codex", "1", "--antigravity", "2", "--models", "claude-a=Model One|Model Two",
+      "--ready", "2", "--spare", "1", "--prewrite", "--specs", "spec/", "--autocompact", "off", "--silence", "30");
+    assert.equal(out.status, 0, said(out));
+    const cfg = JSON.parse(r.read("agents/desk/garden-app/desk.json"));
+    assert.deepEqual(cfg.agents.map((a) => a.name), ["claude-a", "codex-a", "gemini-a", "gemini-b"]);
+    assert.deepEqual(cfg.agents.map((a) => a.tool), ["claude-code", "codex", "antigravity", "antigravity"]);
+    assert.deepEqual(cfg.agents.map((a) => a.port), [8811, 8821, 8831, 8841]);
+    assert.deepEqual(cfg.agents.map((a) => a.reviewer), ["codex-a", "gemini-a", "gemini-b", "claude-a"], "a ring");
+    assert.deepEqual(cfg.agents[0].models, ["Model One", "Model Two"]);
+    assert.equal(cfg.agents[1].models, undefined, "no list means any model");
+    assert.equal(cfg.ready, 2); assert.equal(cfg.spare, 1); assert.equal(cfg.prewrite, true); assert.equal(cfg.specs, "spec/");
+    assert.equal(cfg.autocompact, false); assert.equal(cfg.silence_minutes, 30);
+    // compaction not set by the skill: no tool's setting is written, and nothing speaks of it
+    assert.ok(!r.has(".codex/config.toml")); assert.ok(!r.has(".gemini/settings.json"));
+    assert.ok(!r.has(".claude/settings.json") || JSON.parse(r.read(".claude/settings.json")).autoCompactWindow === undefined);
+    assert.ok(!/compacts at/.test(out.stdout), "the prompts say nothing of compaction");
+    assert.ok(out.stdout.includes("Model One"), "the prompt names the models the agent may use");
+    assert.equal(r.desk("validate", "--project", "garden-app").status, 0, said(r.desk("validate", "--project", "garden-app")));
+    assert.ok(!/compaction/.test(said(r.desk("doctor", "--project", "garden-app"))), "the doctor expects no compaction file");
+    assert.match(r.desk("status", "--project", "garden-app").stdout, /not set by the skill/);
+    // what differs from the defaults is said, with the way to keep it
+    assert.match(out.stdout, /differ from the defaults/i); assert.match(out.stdout, /defaults --set/);
+    for (const k of ["ready=2", "spare=1", "autocompact=off"]) assert.ok(out.stdout.includes(k), k);
+  } finally { r.done(); }
+  const no = (why, ...a) => { const x = bare(); try { const o = x.desk("setup", "--project", "garden-app", ...a); assert.equal(o.status, 2, `${why}: ${said(o)}`); assert.ok(!x.has("agents"), `${why}: nothing written`); return said(o); } finally { x.done(); } };
+  assert.match(no("more than six", "--claude", "4", "--codex", "3"), /6/);
+  assert.match(no("counts that don't add up", "--agents", "3", "--claude", "1", "--codex", "1"), /add up/);
+  no("a figure that isn't tokens", "--autocompact", "12");
+  assert.match(no("a model for nobody", "--claude", "1", "--models", "nobody=x"), /nobody/);
+  no("no ready briefs", "--ready", "0");
+  const x = bare();
+  try {
+    assert.equal(x.desk("setup", "--project", "garden-app", "--agents", "3").status, 0);
+    assert.deepEqual(JSON.parse(x.read("agents/desk/garden-app/desk.json")).agents.map((a) => `${a.name}:${a.tool}:${a.reviewer}`), ["agent-a:other:agent-b", "agent-b:other:agent-c", "agent-c:other:agent-a"]);
+    assert.equal(x.desk("setup", "--project", "solo-app", "--claude", "1").status, 0);
+    assert.equal(JSON.parse(x.read("agents/desk/solo-app/desk.json")).agents[0].reviewer, "leader", "one agent is reviewed by the leader");
+  } finally { x.done(); }
+});
+
+test("the owner's defaults are kept in the repository, sit between the skill's own and each setup's answers, and never hold a project's own fields", () => {
+  const r = bare();
+  const file = "agents/desk/defaults.json";
+  try {
+    let out = r.desk("defaults");
+    assert.equal(out.status, 0, said(out)); assert.match(out.stdout, /autocompact\s+500,000.*the skill's own/); assert.match(out.stdout, /agents\s+2/);
+    assert.ok(!r.has(file), "looking writes nothing");
+    out = r.desk("defaults", "--set", "autocompact=300000");
+    assert.equal(out.status, 0, said(out)); assert.deepEqual(JSON.parse(r.read(file)), { autocompact: 300000 });
+    out = r.desk("defaults", "set", "ready=2", "claude=1", "codex=1");
+    assert.equal(out.status, 0, said(out)); assert.deepEqual(JSON.parse(r.read(file)), { autocompact: 300000, ready: 2, claude: 1, codex: 1 });
+    assert.match(r.desk("defaults").stdout, /autocompact\s+300,000.*this repository's/);
+    out = r.desk("defaults", "--set", "project=x"); assert.equal(out.status, 1); assert.match(said(out), /isn't a setting/);
+    for (const bad of ["autocompact=5", "ready=0", "agents=9", "awake=perhaps", "work_branch=main", "repository=a/b"]) assert.equal(r.desk("defaults", "--set", bad).status, 1, bad);
+    assert.deepEqual(Object.keys(JSON.parse(r.read(file))).sort(), ["autocompact", "claude", "codex", "ready"]);
+    // a new project starts from them
+    out = r.desk("setup", "--project", "garden-app");
+    assert.equal(out.status, 0, said(out));
+    let cfg = JSON.parse(r.read("agents/desk/garden-app/desk.json"));
+    assert.equal(cfg.autocompact, 300000); assert.equal(cfg.ready, 2); assert.deepEqual(cfg.agents.map((a) => a.name), ["claude-a", "codex-a"]);
+    assert.ok(!/differ from the defaults/i.test(out.stdout), "nothing differs, so nothing is asked");
+    // an answer wins over a default, and is offered as the new one
+    out = r.desk("setup", "--project", "shed-app", "--autocompact", "off", "--antigravity", "1", "--claude", "0", "--codex", "0");
+    assert.equal(out.status, 0, said(out));
+    cfg = JSON.parse(r.read("agents/desk/shed-app/desk.json"));
+    assert.equal(cfg.autocompact, false); assert.deepEqual(cfg.agents.map((a) => a.name), ["gemini-a"]); assert.equal(cfg.ready, 2);
+    assert.match(out.stdout, /differ from the defaults/i); assert.ok(out.stdout.includes("autocompact=off"));
+    assert.equal(JSON.parse(r.read(file)).autocompact, 300000, "setup never changes the defaults by itself");
+    assert.equal(r.desk("defaults", "--set", "autocompact=off").status, 0);
+    assert.equal(JSON.parse(r.read(file)).autocompact, false); assert.match(r.desk("defaults").stdout, /not set by the skill/);
+    assert.equal(r.desk("defaults", "--reset", "autocompact").status, 0); assert.equal(JSON.parse(r.read(file)).autocompact, undefined);
+    assert.equal(r.desk("defaults", "--reset").status, 0); assert.ok(!r.has(file), "reset alone takes them all away");
+    // a defaults file that is wrong is said, never applied
+    writeFileSync(join(r.dir, file), '{ "ready": 0, "project": "x" }');
+    out = r.desk("setup", "--project", "third-app"); assert.equal(out.status, 2, said(out)); assert.match(said(out), /defaults\.json/); assert.ok(!r.has("agents/desk/third-app"));
+  } finally { r.done(); }
+});
+
+test("setup's steps ask every setting in three rounds, each with its default, and ask whether a changed answer becomes the new default", () => {
+  const setup = read("commands/setup.md");
+  for (const w of ["Round 1", "Round 2", "Round 3", "use the defaults for the rest"]) assert.ok(setup.includes(w), `commands/setup.md: ${w}`);
+  const asks = ["project", "How many agents", "Claude", "ChatGPT", "Gemini", "models each", "ready", "spare", "pre-write", "spec", "job", "reviews", "automatic checking", "silent", "compaction", "not set by the skill", "subagents", "starts", "work branch"];
+  for (const w of asks) assert.ok(setup.toLowerCase().includes(w.toLowerCase()), `commands/setup.md asks about: ${w}`);
+  for (const w of ["(default: 2)", "(default: 1)", "(default: 0)", "(default: no)", "(default: 20)", "(default: 500,000)"]) assert.ok(setup.includes(w), `commands/setup.md shows the default ${w}`);
+  assert.ok(setup.includes("new default"), "it asks whether a changed answer becomes the default"); assert.ok(setup.includes("defaults --set"));
+  assert.ok(!/at most three questions/i.test(setup), "the old limit is gone");
+  const lead = read("protocol/lead.md");
+  assert.ok(lead.includes("agents/desk/defaults.json")); assert.ok(lead.includes("## Pre-writing the waves"));
+  for (const w of ["10 minutes", "waves --review", "major", "waits for"]) assert.ok(lead.slice(lead.indexOf("## Pre-writing the waves")).split(/\n## /)[0].includes(w), `lead.md, Pre-writing the waves: ${w}`);
+  const agent = read("protocol/agent.md");
+  for (const w of ["models check", "models allow", "allow this model"]) assert.ok(agent.includes(w), `agent.md: ${w}`);
+  assert.equal(JSON.parse(read("templates/desk.json")).ready, 1); assert.equal(JSON.parse(read("templates/desk.json")).spare, 0); assert.equal(JSON.parse(read("templates/desk.json")).prewrite, false);
+});

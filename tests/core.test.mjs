@@ -2187,3 +2187,108 @@ test("desk.mjs end with everything merged needs no force, and without gh says wh
     assert.ok(existsSync(join(lead, "agents/desk/archive/garden-app/desk.json")));
   } finally { d.done(); }
 });
+
+// ---- 2.2.0: the models an agent may use, briefs kept ready and spare, and waves
+
+test("an agent may be held to a list of models: check says whether one is on it, and allow adds one on the work branch from the agent's own copy", () => {
+  const two = desk().agents;
+  says(configProblems(desk({ agents: [{ ...two[0], models: "Model One" }, two[1]] })), "models");
+  says(configProblems(desk({ agents: [{ ...two[0], models: ["ok", 7] }, two[1]] })), "models");
+  assert.deepEqual(configProblems(desk({ agents: [{ ...two[0], models: ["Model One", "Model Two"] }, two[1]] })), []);
+  const d = deskWithOrigin();
+  const lead = join(d.dir, "lead");
+  const onOrigin = () => { d.C("fetch", "-q", "origin"); return JSON.parse(d.C("show", `origin/claude/work:${CONFIG_PATH}`)).agents.find((a) => a.name === "agent-a").models; };
+  const check = (model, ...a) => { d.C("fetch", "-q", "origin"); return deskRun(d.copy, "--ref", "origin/claude/work", "models", "check", model, ...a); };
+  try {
+    // no list: any model
+    let r = check("Anything"); assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /any model/);
+    d.rewrite((c) => ({ ...c, agents: c.agents.map((a) => a.name === "agent-a" ? { ...a, models: ["Model One"] } : a) })); d.board({});
+    r = check("Model One"); assert.equal(r.status, 0, r.stdout + r.stderr); assert.match(r.stdout, /allowed/);
+    r = check("model one"); assert.equal(r.status, 0, "a name is matched without regard to case");
+    r = check("Model Nine"); assert.equal(r.status, 1, r.stdout); assert.match(r.stdout + r.stderr, /Model Nine isn't on agent-a's list \(Model One\)/); assert.match(r.stdout + r.stderr, /models allow/);
+    assert.equal(check("Model Nine", "--agent", "agent-b").status, 0, "agent-b has no list");
+    assert.match(deskRun(lead, "status").stdout, /agent-a may use: Model One/);
+    // the owner's override, in the agent's own conversation
+    r = deskRun(d.copy, "models", "allow", "Model Nine", "--push");
+    assert.equal(r.status, 0, r.stdout + r.stderr); assert.match(r.stdout, /Pushed/); assert.deepEqual(onOrigin(), ["Model One", "Model Nine"]);
+    assert.equal(check("Model Nine").status, 0);
+    assert.match(deskRun(d.copy, "models", "allow", "Model Nine", "--push").stdout, /already/);
+    r = deskRun(d.copy, "models", "disallow", "Model One", "--push"); assert.equal(r.status, 0, r.stderr); assert.deepEqual(onOrigin(), ["Model Nine"]);
+    // the leader does the same in its checkout, for any agent
+    d.L("pull", "-q", "origin", "claude/work");
+    r = deskRun(lead, "models", "allow", "Model Two", "--agent", "agent-b"); assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(JSON.parse(readFileSync(join(lead, CONFIG_PATH), "utf8")).agents.find((a) => a.name === "agent-b").models, ["Model Two"]);
+    assert.equal(deskRun(lead, "models", "allow", "Model Two", "--agent", "nobody").status, 1);
+    assert.equal(deskRun(lead, "models", "allow").status, 2);
+  } finally { d.done(); }
+  assert.match(PROMPTS.agentPrompt(desk({ agents: [{ ...two[0], models: ["Model One", "Model Two"] }, two[1]] }), "agent-a"), /may run on Model One or Model Two/);
+});
+
+test("the desk keeps so many briefs ready for each agent and a pool of spares for anyone: plan names a shortfall, and a spare goes up for the agent named", async () => {
+  const { planDesk } = await import("../skill/agent-desk/scripts/plan.mjs");
+  for (const [k, bad] of [["ready", 0], ["ready", 9], ["spare", -1], ["spare", 2.5], ["prewrite", "yes"]]) says(configProblems(desk({ [k]: bad })), k);
+  assert.deepEqual(configProblems(desk({ ready: 3, spare: 2, prewrite: true })), []);
+  const queue = [{ id: "Q1-a", slot: "agent-a", may_change: [], waits_on: [] }, { id: "S1-s", slot: "any", may_change: [], waits_on: [] }];
+  let lines = planDesk({ cfg: desk({ ready: 2, spare: 2 }), rows: {}, open: {}, queue });
+  assert.ok(lines.some((l) => /^agent-a: .*Q1-a/.test(l)), lines.join("\n"));
+  assert.ok(lines.some((l) => /agent-a has 1 of 2 briefs ready: write 1 more/.test(l)), lines.join("\n"));
+  assert.ok(lines.some((l) => /agent-b has 0 of 2 briefs ready: write 2 more/.test(l)), lines.join("\n"));
+  assert.ok(lines.some((l) => /^spare: S1-s \(1 of 2: write 1 more\)/.test(l)), lines.join("\n"));
+  lines = planDesk({ cfg: desk({ ready: 1, spare: 1 }), rows: {}, open: {}, queue: [...queue, { id: "Q2-b", slot: "agent-b", may_change: [], waits_on: [] }] });
+  assert.ok(!lines.some((l) => /write \d+ more/.test(l)), lines.join("\n")); assert.ok(lines.some((l) => /^spare: S1-s$/.test(l)));
+  assert.ok(!planDesk({ cfg: desk(), rows: {}, open: {}, queue: [] }).some((l) => /ready|spare/.test(l)), "a desk that names neither is told nothing new");
+  const d = deskWithOrigin();
+  const lead = leadOf(d);
+  const Q = "agents/desk/garden-app/queue";
+  try {
+    let r = deskRun(lead, "brief", "S1-s", "--for", "any", "--spec", "A1", "--title", "A spare", "--queue", "--wave", "2");
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const spare = parseBrief(readFileSync(join(lead, Q, "S1-s.md"), "utf8"));
+    assert.equal(spare.slot, "any"); assert.equal(spare.reviewer, "any"); assert.equal(spare.branch, "desk/garden-app/any/S1-s"); assert.equal(spare.wave, "2");
+    r = deskRun(lead, "brief", "S2-s", "--for", "any", "--spec", "A1", "--title", "A spare"); assert.equal(r.status, 1); assert.match(r.stderr, /--queue/);
+    r = deskRun(lead, "brief", "Q5-q", "--for", "agent-b", "--spec", "A1", "--title", "Queued", "--queue"); assert.equal(r.status, 0, r.stderr); assert.ok(existsSync(join(lead, Q, "Q5-q.md")));
+    assert.match(deskRun(lead, "plan").stdout, /spare: S1-s/);
+    r = deskRun(lead, "up", "S1-s"); assert.equal(r.status, 1); assert.match(r.stderr, /--for <agent>/); assert.ok(existsSync(join(lead, Q, "S1-s.md")), "left where it was");
+    r = deskRun(lead, "up", "S1-s", "--for", "agent-b");
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const up = parseBrief(readFileSync(join(lead, ASSIGNMENTS, "S1-s.md"), "utf8"));
+    assert.equal(up.slot, "agent-b"); assert.equal(up.reviewer, "agent-a"); assert.equal(up.branch, "desk/garden-app/agent-b/S1-s"); assert.equal(up.port, 8821);
+    assert.equal(parseBoard(readFileSync(join(lead, "agents/desk/garden-app/board.md"), "utf8")).slots["agent-b"].state, "ready");
+    // a brief for anyone is never on the board
+    says(briefProblems(parseBrief(good({ id: "S9-s", slot: "any", reviewer: "any", branch: "desk/garden-app/any/S9-s", port: "any" })), "S9-s", desk()), "slot");
+  } finally { d.done(); }
+});
+
+test("waves: the queue's briefs are laid out wave by wave, a whole wave goes up at once, and a wave's review is held to ten minutes", () => {
+  const d = deskWithOrigin();
+  const lead = leadOf(d);
+  const Q = "agents/desk/garden-app/queue";
+  const q = (id, slot, reviewer, port, wave, waits = []) => putIn(lead, `${Q}/${id}.md`, good({ id, slot, reviewer, branch: `desk/garden-app/${slot}/${id}`, port, wave: String(wave), lists: { may_change: [`src/${id}.js`], frozen: [], checks: ["true"], waits_on: waits } }));
+  try {
+    q("W1-a", "agent-a", "agent-b", "8811", 1); q("W1-b", "agent-b", "agent-a", "8821", 1); q("W2-a", "agent-a", "agent-b", "8811", 2, ["W1-a"]);
+    putIn(lead, `${Q}/S1-s.md`, good({ id: "S1-s", slot: "any", reviewer: "any", branch: "desk/garden-app/any/S1-s", port: "any", lists: { may_change: ["src/s.js"], frozen: [], checks: ["true"] } }));
+    let r = deskRun(lead, "waves");
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const text = r.stdout;
+    assert.ok(text.indexOf("Wave 1") >= 0 && text.indexOf("Wave 1") < text.indexOf("Wave 2"), text);
+    assert.match(text, /Wave 1[\s\S]*agent-a: W1-a[\s\S]*agent-b: W1-b[\s\S]*Wave 2[\s\S]*agent-a: W2-a \(waits on W1-a\)/); assert.match(text, /Spare[\s\S]*S1-s/);
+    assert.match(text, /nothing is changed/i); assert.match(text, /up --wave 1/);
+    r = deskRun(lead, "up", "--wave", "1");
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const rows = parseBoard(readFileSync(join(lead, "agents/desk/garden-app/board.md"), "utf8")).slots;
+    assert.equal(rows["agent-a"].brief, "W1-a"); assert.equal(rows["agent-b"].brief, "W1-b"); assert.equal(rows["agent-a"].state, "ready");
+    assert.ok(existsSync(join(lead, ASSIGNMENTS, "W1-b.md"))); assert.ok(existsSync(join(lead, Q, "W2-a.md")), "the next wave stays queued");
+    r = deskRun(lead, "up", "--wave", "2"); assert.equal(r.status, 1, "agent-a is busy"); assert.match(r.stderr, /agent-a is ready with W1-a/);
+    assert.equal(deskRun(lead, "up", "--wave", "7").status, 1);
+    // the review after a wave: a clock, a checklist, and a line once it has run over
+    r = deskRun(lead, "waves", "--review", "1");
+    assert.equal(r.status, 0, r.stdout + r.stderr); assert.match(r.stdout, /10 minutes/); assert.match(r.stdout, /W2-a/); assert.match(r.stdout, /waves --reviewed 1/);
+    assert.ok(!/over/.test(deskRun(lead, "status").stdout.split("\n").filter((l) => /wave/i.test(l)).join("\n")));
+    d.L("config", "desk.waves.review.1", new Date(Date.now() - 12 * 60000).toISOString());
+    assert.match(deskRun(lead, "status").stdout, /wave 1's review has run 12 minutes, over its 10/i);
+    assert.match(deskRun(lead, "waves", "--review", "1").stdout, /over/i);
+    r = deskRun(lead, "waves", "--reviewed", "1"); assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /12 minutes/);
+    assert.ok(!/review has run/.test(deskRun(lead, "status").stdout));
+    assert.equal(deskRun(lead, "waves", "--reviewed", "1").status, 1, "no review is open");
+  } finally { d.done(); }
+});
